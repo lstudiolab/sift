@@ -303,7 +303,6 @@ private:
   lexer::Lexer lexer_;
   std::vector<Diagnostic> diagnostics_;
 
-  // These indexes point into AST-owned strings; no duplicate name allocation is needed.
   std::unordered_set<std::string_view> callingNames_;
   std::unordered_set<std::string_view> functionNames_;
   std::unordered_set<std::string_view> structNames_;
@@ -351,7 +350,6 @@ private:
   std::string parseCallingName();
   std::string tokenText(const Token& token) const;
 
-  bool isExpressionStart(TokenKind kind) const noexcept;
   bool isAssignmentOperator(TokenKind kind) const noexcept;
 
   static std::string operatorText(TokenKind kind);
