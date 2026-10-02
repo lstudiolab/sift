@@ -25,8 +25,6 @@ struct LexerCursor {
   const char* current = nullptr;
   const char* end = nullptr;
   std::size_t offset = 0;
-  std::size_t line = 1;
-  std::size_t column = 1;
 };
 
 struct LexerOptions {
@@ -88,9 +86,9 @@ enum class TokenKind : std::uint16_t {
 
 struct Token {
   TokenKind kind = TokenKind::Unknown;
-  std::string_view text{};
-  SourceLocation location{};
-  std::size_t endOffset = 0;
+  const char* source = nullptr;
+  std::uint32_t start = 0;
+  std::uint32_t length = 0;
 
   constexpr bool is(TokenKind expected) const noexcept {
     return kind == expected;
@@ -113,6 +111,21 @@ struct Token {
       default:
         return false;
     }
+  }
+
+  std::string_view text() const noexcept {
+    if (source == nullptr) {
+      return {};
+    }
+
+    return {
+        source + start,
+        length
+    };
+  }
+
+  std::uint32_t endOffset() const noexcept {
+    return start + length;
   }
 };
 
