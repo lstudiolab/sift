@@ -1203,7 +1203,7 @@ Token Lexer::makeToken(
     TokenKind kind,
     const char* begin,
     const char* end,
-    SourceLocation) const noexcept {
+    ) const noexcept {
   const std::size_t start =
       static_cast<std::size_t>(begin - source_.data());
   const std::size_t length =
@@ -1223,8 +1223,7 @@ Token Lexer::finish(TokenKind kind) noexcept {
   return makeToken(
       kind,
       tokenStart_.current,
-      cursor_.current,
-      {});
+      cursor_.current);
 }
 
 // Record a diagnostic while allowing lexing to continue.
@@ -2903,8 +2902,8 @@ Token Lexer::lexImpl() {
     const char current = peekChar();
 
     switch (current) {
-      case '\\n':
-      case '\\r': {
+      case '\n':
+      case '\r': {
         consumeChar();
         if (options_.emitNewlines) {
           Token token = finish(TokenKind::Newline);
