@@ -1,6 +1,5 @@
 #include "sift/Parse/Parser.h"
 
-#include <algorithm>
 #include <utility>
 
 namespace sift::parse {
@@ -27,6 +26,10 @@ bool isControlKeyword(TokenKind kind) noexcept {
 
 Parser::Parser(std::string_view source)
     : lexer_(source) {
+  diagnostics_.reserve(16);
+  callingNames_.reserve(32);
+  functionNames_.reserve(32);
+  structNames_.reserve(16);
   advance();
 }
 
@@ -35,26 +38,17 @@ const std::vector<Diagnostic>& Parser::diagnostics() const noexcept {
 }
 
 bool Parser::hasErrors() const noexcept {
-  if (!diagnostics_.empty()) {
-    return std::any_of(
-        diagnostics_.begin(),
-        diagnostics_.end(),
-        [](const Diagnostic& diagnostic) {
-          return diagnostic.severity == DiagnosticSeverity::Error;
-        });
+  for (const Diagnostic& diagnostic : diagnostics_) {
+    if (diagnostic.severity == DiagnosticSeverity::Error) {
+      return true;
+    }
   }
-
   return lexer_.hasErrors();
 }
 
 void Parser::advance() {
   previous_ = current_;
   current_ = lexer_.lex();
-  hasCurrent_ = true;
-}
-
-Token Parser::peek() const {
-  return current_;
 }
 
 bool Parser::check(TokenKind kind) const {
@@ -192,10 +186,8 @@ std::unique_ptr<StructDeclaration> Parser::parseStruct() {
   node->location = lexer_.locationAt(start.start);
   node->name = parseIdentifier("struct name");
 
-  if (containsName(structNames_, node->name)) {
+  if (!structNames_.insert(node->name).second) {
     error(previous_, "duplicate struct name");
-  } else {
-    structNames_.push_back(node->name);
   }
 
   if (!expect(TokenKind::LeftBrace, "expected '{' after struct name")) {
@@ -244,10 +236,8 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
   node->location = lexer_.locationAt(start.start);
   node->name = parseIdentifier("function name");
 
-  if (containsName(functionNames_, node->name)) {
+  if (!functionNames_.insert(node->name).second) {
     error(previous_, "duplicate function name in this file");
-  } else {
-    functionNames_.push_back(node->name);
   }
 
   if (!expect(TokenKind::LeftParen, "expected '(' after function name")) {
@@ -260,10 +250,8 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
   } else {
     node->callingName = parseCallingName();
 
-    if (containsName(callingNames_, node->callingName)) {
+    if (!callingNames_.insert(node->callingName).second) {
       error(previous_, "calling name is already used by another function in this file");
-    } else {
-      callingNames_.push_back(node->callingName);
     }
 
     if (match(TokenKind::Comma)) {
@@ -914,17 +902,6 @@ bool Parser::isStatementStart(TokenKind kind) const noexcept {
          isExpressionStart(kind);
 }
 
-bool Parser::isTypeToken(TokenKind kind) const noexcept {
-  return kind == TokenKind::Identifier ||
-         kind == TokenKind::KeywordInt ||
-         kind == TokenKind::KeywordNum ||
-         kind == TokenKind::KeywordString ||
-         kind == TokenKind::KeywordBool ||
-         kind == TokenKind::KeywordBytes ||
-         kind == TokenKind::KeywordAny ||
-         kind == TokenKind::KeywordSome;
-}
-
 bool Parser::isAssignmentOperator(TokenKind kind) const noexcept {
   return kind == TokenKind::Equal ||
          kind == TokenKind::PlusEqual ||
@@ -932,26 +909,6 @@ bool Parser::isAssignmentOperator(TokenKind kind) const noexcept {
          kind == TokenKind::StarEqual ||
          kind == TokenKind::SlashEqual ||
          kind == TokenKind::PercentEqual;
-}
-
-int Parser::precedence(TokenKind kind) noexcept {
-  switch (kind) {
-    case TokenKind::OrOr: return 1;
-    case TokenKind::AndAnd: return 2;
-    case TokenKind::EqualEqual:
-    case TokenKind::BangEqual:
-    case TokenKind::TildeEqual: return 3;
-    case TokenKind::Less:
-    case TokenKind::LessEqual:
-    case TokenKind::Greater:
-    case TokenKind::GreaterEqual: return 4;
-    case TokenKind::Plus:
-    case TokenKind::Minus: return 5;
-    case TokenKind::Star:
-    case TokenKind::Slash:
-    case TokenKind::Percent: return 6;
-    default: return -1;
-  }
 }
 
 std::string Parser::operatorText(TokenKind kind) {
@@ -983,15 +940,6 @@ std::string Parser::operatorText(TokenKind kind) {
     case TokenKind::KeywordPanic: return "panic";
     default: return {};
   }
-}
-
-bool Parser::containsName(
-    const std::vector<std::string>& names,
-    std::string_view name) noexcept {
-  return std::find(
-      names.begin(),
-      names.end(),
-      name) != names.end();
 }
 
 } // namespace sift::parse
