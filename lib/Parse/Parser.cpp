@@ -140,6 +140,21 @@ void Parser::leaveExpression() noexcept {
   }
 }
 
+bool Parser::enterAssignment() {
+  if (assignmentDepth_ >= maxAssignmentDepth_) {
+    return false;
+  }
+
+  ++assignmentDepth_;
+  return true;
+}
+
+void Parser::leaveAssignment() noexcept {
+  if (assignmentDepth_ != 0) {
+    --assignmentDepth_;
+  }
+}
+
 bool Parser::check(TokenKind kind) const {
   return current_.kind == kind;
 }
@@ -193,11 +208,30 @@ void Parser::synchronize() {
     }
 
     if (isDeclarationKeyword(current_.kind) ||
-        isControlKeyword(current_.kind)) {
+        isControlKeyword(current_.kind) ||
+        current_.kind == TokenKind::KeywordCase ||
+        current_.kind == TokenKind::KeywordDefat) {
       return;
     }
 
     advance();
+  }
+}
+
+void Parser::synchronizeExpression() {
+  while (!check(TokenKind::EndOfFile)) {
+    switch (current_.kind) {
+      case TokenKind::Semicolon:
+      case TokenKind::RightBrace:
+      case TokenKind::RightParen:
+      case TokenKind::Comma:
+      case TokenKind::KeywordCase:
+      case TokenKind::KeywordDefat:
+        return;
+      default:
+        advance();
+        break;
+    }
   }
 }
 
@@ -710,6 +744,11 @@ std::unique_ptr<ExpressionStatement> Parser::parseExpressionStatement() {
   auto node = std::make_unique<ExpressionStatement>();
   node->location = lexer_.locationAt(current_.start);
   node->expression = parseExpression();
+
+  if (!node->expression) {
+    synchronizeExpression();
+  }
+
   match(TokenKind::Semicolon);
   return node;
 }
@@ -754,9 +793,16 @@ std::unique_ptr<Expression> Parser::parseExpression() {
 
 // Assignment is right-associative and is the only expression level that recurses.
 std::unique_ptr<Expression> Parser::parseAssignment() {
+  if (!enterAssignment()) {
+    error(current_, "assignment nesting exceeds parser limit");
+    synchronizeExpression();
+    return nullptr;
+  }
+
   auto left = parseBinaryExpression(1);
 
   if (!left || !isAssignmentOperator(current_.kind)) {
+    leaveAssignment();
     return left;
   }
 
@@ -767,6 +813,8 @@ std::unique_ptr<Expression> Parser::parseAssignment() {
   auto right = parseAssignment();
   if (!right) {
     error(current_, "expected expression after assignment operator");
+    synchronizeExpression();
+    leaveAssignment();
     return left;
   }
 
@@ -783,6 +831,7 @@ std::unique_ptr<Expression> Parser::parseAssignment() {
   assignment.target = std::move(left);
   assignment.value = std::move(right);
   node->value = std::move(assignment);
+  leaveAssignment();
   return node;
 }
 
@@ -894,6 +943,7 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
 
       if (!current_.isIdentifier()) {
         error(current_, "expected a name after '.'");
+        synchronizeExpression();
         return expression;
       }
 
@@ -923,6 +973,7 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
           auto argument = parseExpression();
           if (!argument) {
             error(current_, "expected call argument");
+            synchronizeExpression();
             break;
           }
           call.arguments.push_back(std::move(argument));
@@ -977,6 +1028,7 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
   }
 
   error(token, "expected an expression");
+  synchronizeExpression();
   return nullptr;
 }
 
