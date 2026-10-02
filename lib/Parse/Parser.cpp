@@ -19,7 +19,10 @@ bool isControlKeyword(TokenKind kind) noexcept {
          kind == TokenKind::KeywordRepeat ||
          kind == TokenKind::KeywordFor ||
          kind == TokenKind::KeywordReturn ||
-         kind == TokenKind::KeywordDefer;
+         kind == TokenKind::KeywordDefer ||
+         kind == TokenKind::KeywordSwitch ||
+         kind == TokenKind::KeywordBreak ||
+         kind == TokenKind::KeywordContinue;
 }
 
 } // namespace
@@ -331,6 +334,24 @@ std::unique_ptr<Statement> Parser::parseStatement() {
     return node;
   }
 
+  if (check(TokenKind::KeywordBreak)) {
+    auto node = std::make_unique<Statement>();
+    node->value = std::move(*parseBreak());
+    return node;
+  }
+
+  if (check(TokenKind::KeywordContinue)) {
+    auto node = std::make_unique<Statement>();
+    node->value = std::move(*parseContinue());
+    return node;
+  }
+
+  if (check(TokenKind::KeywordSwitch)) {
+    auto node = std::make_unique<Statement>();
+    node->value = std::move(*parseSwitch());
+    return node;
+  }
+
   if (check(TokenKind::KeywordFunction)) {
     auto node = std::make_unique<Statement>();
     node->value = std::move(*parseFunction());
@@ -473,6 +494,78 @@ std::unique_ptr<DeferStatement> Parser::parseDefer() {
   auto node = std::make_unique<DeferStatement>();
   node->location = lexer_.locationAt(start.start);
   node->body = parseBlock();
+  return node;
+}
+
+std::unique_ptr<BreakStatement> Parser::parseBreak() {
+  const Token start = current_;
+  advance();
+
+  auto node = std::make_unique<BreakStatement>();
+  node->location = lexer_.locationAt(start.start);
+  match(TokenKind::Semicolon);
+  return node;
+}
+
+std::unique_ptr<ContinueStatement> Parser::parseContinue() {
+  const Token start = current_;
+  advance();
+
+  auto node = std::make_unique<ContinueStatement>();
+  node->location = lexer_.locationAt(start.start);
+  match(TokenKind::Semicolon);
+  return node;
+}
+
+std::unique_ptr<SwitchStatement> Parser::parseSwitch() {
+  const Token start = current_;
+  advance();
+
+  auto node = std::make_unique<SwitchStatement>();
+  node->location = lexer_.locationAt(start.start);
+  node->cases.reserve(4);
+  node->subject = parseExpression();
+
+  if (!expect(TokenKind::LeftBrace, "expected '{' after switch expression")) {
+    synchronize();
+    return node;
+  }
+
+  bool sawDefault = false;
+  while (!check(TokenKind::RightBrace) && !check(TokenKind::EndOfFile)) {
+    if (match(TokenKind::Semicolon) || match(TokenKind::Comment)) {
+      continue;
+    }
+
+    const bool isCase = check(TokenKind::KeywordCase);
+    const bool isDefault = check(TokenKind::KeywordDefat);
+    if (!isCase && !isDefault) {
+      error(current_, "expected 'case' or 'defat' in switch");
+      synchronize();
+      continue;
+    }
+
+    const Token caseStart = current_;
+    advance();
+
+    auto caseNode = std::make_unique<SwitchCase>();
+    caseNode->location = lexer_.locationAt(caseStart.start);
+    caseNode->isDefault = isDefault;
+
+    if (isDefault) {
+      if (sawDefault) {
+        error(caseStart, "duplicate default switch case");
+      }
+      sawDefault = true;
+    } else {
+      caseNode->condition = parseExpression();
+    }
+
+    caseNode->body = parseBlock();
+    node->cases.push_back(std::move(caseNode));
+  }
+
+  expect(TokenKind::RightBrace, "expected '}' after switch statement");
   return node;
 }
 
