@@ -26,7 +26,7 @@ constexpr std::uint64_t fnv1a(std::string_view text) noexcept {
   return value;
 }
 
-constexpr std::array<KeywordEntry, 90> Keywords = {{
+constexpr std::array<KeywordEntry, 89> Keywords = {{
   {"var", TokenKind::KeywordVar, fnv1a("var")},
   {"const", TokenKind::KeywordConst, fnv1a("const")},
   {"function", TokenKind::KeywordFunction, fnv1a("function")},
