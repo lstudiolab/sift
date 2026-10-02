@@ -64,6 +64,8 @@ private:
     bool lastWasDot = false;
   };
 
+  LexState lookaheadState_{};
+
   LexState saveState() const noexcept;
   void restoreState(const LexState& state) noexcept;
 
@@ -134,7 +136,6 @@ private:
   static bool isOctalDigit(char value) noexcept;
   static unsigned hexValue(char value) noexcept;
 
-  static std::uint64_t keywordHash(std::string_view text) noexcept;
   static TokenKind classifyKeyword(std::string_view text) noexcept;
 
   Token handleIdentifierContext(Token token) noexcept;
