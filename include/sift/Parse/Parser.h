@@ -48,6 +48,7 @@ enum class NodeKind {
   BreakStatement,
   ContinueStatement,
   SwitchStatement,
+  SwitchCase,
   ExpressionStatement,
   IdentifierExpression,
   LiteralExpression,
@@ -277,6 +278,10 @@ struct SwitchCase final : ASTNode {
   std::unique_ptr<Expression> condition;
   std::unique_ptr<Block> body;
   bool isDefault = false;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::SwitchCase;
+  }
 };
 
 struct SwitchStatement final : ASTNode {
