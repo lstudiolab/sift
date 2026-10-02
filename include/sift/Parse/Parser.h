@@ -342,6 +342,7 @@ private:
   lexer::Lexer lexer_;
   std::vector<Diagnostic> diagnostics_;
   bool diagnosticsTruncated_ = false;
+  bool hasParserErrors_ = false;
   static constexpr std::size_t maxDiagnostics_ = 256;
 
   std::unordered_set<std::string_view> callingNames_;
@@ -392,12 +393,8 @@ private:
   std::unique_ptr<Block> parseBlock();
   std::unique_ptr<Expression> parseExpression();
   std::unique_ptr<Expression> parseAssignment();
-  std::unique_ptr<Expression> parseLogicalOr();
-  std::unique_ptr<Expression> parseLogicalAnd();
-  std::unique_ptr<Expression> parseEquality();
-  std::unique_ptr<Expression> parseComparison();
-  std::unique_ptr<Expression> parseTerm();
-  std::unique_ptr<Expression> parseFactor();
+  std::unique_ptr<Expression> parseBinaryExpression(int minimumPrecedence);
+  static int binaryPrecedence(TokenKind kind) noexcept;
   std::unique_ptr<Expression> parseUnary();
   std::unique_ptr<Expression> parsePostfix();
   std::unique_ptr<Expression> parsePrimary();
@@ -409,7 +406,7 @@ private:
 
   bool isAssignmentOperator(TokenKind kind) const noexcept;
 
-  static std::string operatorText(TokenKind kind);
+  static std::string_view operatorText(TokenKind kind) noexcept;
 };
 
 } // namespace sift::parse
