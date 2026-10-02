@@ -303,9 +303,10 @@ private:
   lexer::Lexer lexer_;
   std::vector<Diagnostic> diagnostics_;
 
-  std::unordered_set<std::string> callingNames_;
-  std::unordered_set<std::string> functionNames_;
-  std::unordered_set<std::string> structNames_;
+  // These indexes point into AST-owned strings; no duplicate name allocation is needed.
+  std::unordered_set<std::string_view> callingNames_;
+  std::unordered_set<std::string_view> functionNames_;
+  std::unordered_set<std::string_view> structNames_;
 
   Token current_{};
   Token previous_{};
