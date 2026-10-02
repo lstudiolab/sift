@@ -47,7 +47,7 @@ private:
   LexerCursor tokenStart_{};
 
   Token lookahead_{};
-  std::vector<Diagnostic> lookaheadDiagnostics_{};
+  std::size_t lookaheadDiagnosticCount_ = 0;
 
   bool hasLookahead_ = false;
   bool expectingCallingName_ = false;
@@ -71,8 +71,51 @@ private:
 
   std::vector<Diagnostic> diagnostics_;
 
-  char peekChar(std::size_t distance = 0) const noexcept;
-  char consumeChar() noexcept;
+  inline char peekChar(std::size_t distance = 0) const noexcept {
+    const std::size_t remaining =
+        static_cast<std::size_t>(cursor_.end - cursor_.current);
+
+    if (distance >= remaining) {
+      return '\0';
+    }
+
+    return cursor_.current[distance];
+  }
+
+  inline char consumeChar() noexcept {
+    if (cursor_.current >= cursor_.end) {
+      return '\0';
+    }
+
+    const char value = *cursor_.current;
+
+    if (value == '\r') {
+      ++cursor_.current;
+      ++cursor_.offset;
+
+      if (cursor_.current < cursor_.end &&
+          *cursor_.current == '\n') {
+        ++cursor_.current;
+        ++cursor_.offset;
+      }
+
+      ++cursor_.line;
+      cursor_.column = 1;
+      return '\n';
+    }
+
+    ++cursor_.current;
+    ++cursor_.offset;
+
+    if (value == '\n') {
+      ++cursor_.line;
+      cursor_.column = 1;
+    } else {
+      ++cursor_.column;
+    }
+
+    return value;
+  }
   bool consumeIf(char value) noexcept;
   bool consumeIf(std::string_view value) noexcept;
 
@@ -144,7 +187,7 @@ private:
       TokenKind kind,
       std::string_view text) noexcept;
 
-  void commitLookaheadDiagnostics();
+  void commitLookaheadDiagnostics() noexcept;
 };
 
 } // namespace sift::lexer
