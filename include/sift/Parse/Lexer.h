@@ -232,8 +232,7 @@ private:
   Token makeToken(
       TokenKind kind,
       const char* begin,
-      const char* end,
-      SourceLocation location) const noexcept;
+      const char* end) const noexcept;
 
   void addDiagnostic(
       DiagnosticSeverity severity,
