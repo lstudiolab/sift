@@ -226,6 +226,22 @@ constexpr bool isQuote(char value) noexcept {
   return value == '"' || value == '\'';
 }
 
+constexpr bool isDoubleQuote(char value) noexcept {
+  return value == '"';
+}
+
+constexpr bool isSingleQuote(char value) noexcept {
+  return value == '\'';
+}
+
+constexpr bool isHashLead(char value) noexcept {
+  return value == '#';
+}
+
+constexpr bool isAtLead(char value) noexcept {
+  return value == '@';
+}
+
 constexpr bool isOperatorLead(char value) noexcept {
   switch (value) {
     case '=':
