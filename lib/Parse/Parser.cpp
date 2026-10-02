@@ -235,6 +235,24 @@ void Parser::synchronizeExpression() {
   }
 }
 
+void Parser::synchronizeToBlockStart() {
+  while (!check(TokenKind::EndOfFile)) {
+    switch (current_.kind) {
+      case TokenKind::LeftBrace:
+      case TokenKind::RightBrace:
+      case TokenKind::Semicolon:
+        return;
+      default:
+        if (isDeclarationKeyword(current_.kind) ||
+            isControlKeyword(current_.kind)) {
+          return;
+        }
+        advance();
+        break;
+    }
+  }
+}
+
 // Parse the translation unit without recursive top-level descent.
 std::unique_ptr<Program> Parser::parse() {
   auto program = std::make_unique<Program>();
@@ -381,7 +399,12 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
 
   if (!expect(TokenKind::LeftParen, "expected '(' after function name")) {
     synchronize();
-    return node;
+    if (!check(TokenKind::LeftBrace)) {
+      synchronizeToBlockStart();
+    }
+    if (!check(TokenKind::LeftBrace)) {
+      return node;
+    }
   }
 
   if (check(TokenKind::RightParen)) {
@@ -402,7 +425,9 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
     }
   }
 
-  expect(TokenKind::RightParen, "expected ')' after function calling name");
+  if (!expect(TokenKind::RightParen, "expected ')' after function calling name")) {
+    synchronizeToBlockStart();
+  }
 
   if (match(TokenKind::Colon)) {
     node->returnType = parseTypeName();
@@ -679,8 +704,10 @@ std::unique_ptr<SwitchStatement> Parser::parseSwitch() {
   node->subject = parseExpression();
 
   if (!expect(TokenKind::LeftBrace, "expected '{' after switch expression")) {
-    synchronize();
-    return node;
+    synchronizeToBlockStart();
+    if (!check(TokenKind::LeftBrace)) {
+      return node;
+    }
   }
 
   bool sawDefault = false;
@@ -759,7 +786,10 @@ std::unique_ptr<Block> Parser::parseBlock() {
   node->location = lexer_.locationAt(current_.start);
 
   if (!expect(TokenKind::LeftBrace, "expected '{' to begin block")) {
-    return node;
+    synchronizeToBlockStart();
+    if (!match(TokenKind::LeftBrace)) {
+      return node;
+    }
   }
 
   while (!check(TokenKind::RightBrace) &&
