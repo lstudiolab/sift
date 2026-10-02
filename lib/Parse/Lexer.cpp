@@ -12,7 +12,6 @@
 
 #include "sift/Parse/Lexer.h"
 
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -21,105 +20,6 @@
 namespace sift::lexer {
 
 namespace {
-
-struct KeywordEntry {
-  std::string_view spelling;
-  TokenKind kind;
-};
-
-constexpr std::array<KeywordEntry, 90> Keywords = {{
-  {"var", TokenKind::KeywordVar},
-  {"const", TokenKind::KeywordConst},
-  {"function", TokenKind::KeywordFunction},
-  {"init", TokenKind::KeywordInit},
-  {"deinit", TokenKind::KeywordDeinit},
-  {"type", TokenKind::KeywordType},
-  {"typealias", TokenKind::KeywordTypealias},
-  {"struct", TokenKind::KeywordStruct},
-  {"class", TokenKind::KeywordClass},
-  {"enum", TokenKind::KeywordEnum},
-  {"protocol", TokenKind::KeywordProtocol},
-  {"extension", TokenKind::KeywordExtension},
-  {"if", TokenKind::KeywordIf},
-  {"else", TokenKind::KeywordElse},
-  {"end", TokenKind::KeywordEnd},
-  {"guard", TokenKind::KeywordGuard},
-  {"switch", TokenKind::KeywordSwitch},
-  {"case", TokenKind::KeywordCase},
-  {"defat", TokenKind::KeywordDefat},
-  {"while", TokenKind::KeywordWhile},
-  {"repeat", TokenKind::KeywordRepeat},
-  {"for", TokenKind::KeywordFor},
-  {"loop", TokenKind::KeywordLoop},
-  {"in", TokenKind::KeywordIn},
-  {"do", TokenKind::KeywordDo},
-  {"break", TokenKind::KeywordBreak},
-  {"continue", TokenKind::KeywordContinue},
-  {"return", TokenKind::KeywordReturn},
-  {"defer", TokenKind::KeywordDefer},
-  {"call", TokenKind::KeywordCall},
-  {"async", TokenKind::KeywordAsync},
-  {"await", TokenKind::KeywordAwait},
-  {"wait", TokenKind::KeywordWait},
-  {"throws", TokenKind::KeywordThrows},
-  {"throw", TokenKind::KeywordThrow},
-  {"try", TokenKind::KeywordTry},
-  {"catch", TokenKind::KeywordCatch},
-  {"rethrow", TokenKind::KeywordRethrow},
-  {"task", TokenKind::KeywordTask},
-  {"true", TokenKind::KeywordTrue},
-  {"false", TokenKind::KeywordFalse},
-  {"self", TokenKind::KeywordSelf},
-  {"some", TokenKind::KeywordSome},
-  {"any", TokenKind::KeywordAny},
-  {"int", TokenKind::KeywordInt},
-  {"num", TokenKind::KeywordNum},
-  {"string", TokenKind::KeywordString},
-  {"bool", TokenKind::KeywordBool},
-  {"bytes", TokenKind::KeywordBytes},
-  {"public", TokenKind::KeywordPublic},
-  {"private", TokenKind::KeywordPrivate},
-  {"protect", TokenKind::KeywordProtect},
-  {"static", TokenKind::KeywordStatic},
-  {"final", TokenKind::KeywordFinal},
-  {"open", TokenKind::KeywordOpen},
-  {"overRide", TokenKind::KeywordOverRide},
-  {"required", TokenKind::KeywordRequired},
-  {"import", TokenKind::KeywordImport},
-  {"export", TokenKind::KeywordExport},
-  {"module", TokenKind::KeywordModule},
-  {"package", TokenKind::KeywordPackage},
-  {"file", TokenKind::KeywordFile},
-  {"@file", TokenKind::KeywordFile},
-  {"@fileID", TokenKind::KeywordFileID},
-  {"@api", TokenKind::KeywordAPI},
-  {"@repo", TokenKind::KeywordRepo},
-  {"@webLink", TokenKind::KeywordWebLink},
-  {"@database", TokenKind::KeywordDatabase},
-  {"message", TokenKind::KeywordMessage},
-  {"error", TokenKind::KeywordError},
-  {"math", TokenKind::KeywordMath},
-  {"abs", TokenKind::KeywordAbs},
-  {"min", TokenKind::KeywordMin},
-  {"max", TokenKind::KeywordMax},
-  {"decrease", TokenKind::KeywordDecrease},
-  {"increase", TokenKind::KeywordIncrease},
-  {"section", TokenKind::KeywordSection},
-  {"data", TokenKind::KeywordData},
-  {"getData", TokenKind::KeywordGetData},
-  {"createData", TokenKind::KeywordCreateData},
-  {"control", TokenKind::KeywordControl},
-  {"connect", TokenKind::KeywordConnect},
-  {"backup", TokenKind::KeywordBackup},
-  {"binary", TokenKind::KeywordBinary},
-  {"kernel", TokenKind::KeywordKernel},
-  {"os", TokenKind::KeywordOS},
-  {"output", TokenKind::KeywordOutput},
-  {"delete", TokenKind::KeywordDelete},
-  {"destroy", TokenKind::KeywordDestroy},
-  {"panic", TokenKind::KeywordPanic}
-}};
-
 
 // Check whether a byte continues a UTF-8 scalar.
 constexpr bool isContinuationByte(unsigned char value) noexcept {
@@ -989,7 +889,7 @@ inline bool runRecoveryBackDoors(
     const char* start = cursor.current;
     const char* target =
         chooseRecoveryTarget(
-            start,
+            locationAt(startOffset),
             cursor.end,
             current);
 
@@ -1037,6 +937,24 @@ Lexer::Lexer(std::string_view source, LexerOptions options) noexcept
   cursor_.end = source_.data() + source_.size();
   cursor_.offset = 0;
 
+  lineStarts_.push_back(0);
+
+  for (std::size_t index = 0; index < source_.size(); ++index) {
+    if (source_[index] == '\n') {
+      lineStarts_.push_back(index + 1);
+      continue;
+    }
+
+    if (source_[index] == '\r') {
+      if (index + 1 < source_.size() &&
+          source_[index + 1] == '\n') {
+        ++index;
+      }
+
+      lineStarts_.push_back(index + 1);
+    }
+  }
+
   tokenStart_ = cursor_;
 }
 
@@ -1051,7 +969,6 @@ void Lexer::reset() noexcept {
 
   lookahead_ = {};
   lookaheadState_ = saveState();
-  lookaheadDiagnosticCount_ = 0;
   hasLookahead_ = false;
 
   expectingCallingName_ = false;
@@ -1079,37 +996,28 @@ SourceLocation Lexer::location() const noexcept {
 // Compute a source location from a byte offset only when needed.
 SourceLocation Lexer::locationAt(std::size_t offset) const noexcept {
   const std::size_t targetOffset =
-      std::min(offset, source_.size());
+      offset < source_.size() ? offset : source_.size();
 
-  const char* begin = source_.data();
-  const char* target = begin + targetOffset;
-  std::size_t line = 1;
-  std::size_t lineStart = 0;
-
-  for (const char* current = begin;
-       current < target;
-       ++current) {
-    if (*current == '\n') {
-      ++line;
-      lineStart = static_cast<std::size_t>(
-          current + 1 - begin);
-    } else if (*current == '\r') {
-      ++line;
-      lineStart = static_cast<std::size_t>(
-          current + 1 - begin);
-
-      if (current + 1 < target &&
-          current[1] == '\n') {
-        ++current;
-        lineStart = static_cast<std::size_t>(
-            current + 1 - begin);
-      }
-    }
+  if (lineStarts_.empty()) {
+    return {targetOffset, 1, targetOffset + 1};
   }
+
+  const auto iterator =
+      std::upper_bound(
+          lineStarts_.begin(),
+          lineStarts_.end(),
+          targetOffset);
+
+  const std::size_t lineIndex =
+      static_cast<std::size_t>(
+          iterator - lineStarts_.begin() - 1);
+
+  const std::size_t lineStart =
+      lineStarts_[lineIndex];
 
   return {
       targetOffset,
-      line,
+      lineIndex + 1,
       targetOffset - lineStart + 1
   };
 }
@@ -2055,6 +1963,7 @@ void Lexer::skipBlockComment() {
 
 // Consume digits for an integer or floating-point component.
 void Lexer::consumeDigits(unsigned base) {
+  const std::size_t startOffset = cursor_.offset;
   const char* begin = cursor_.current;
   const char* current = begin;
 
@@ -2102,7 +2011,7 @@ void Lexer::consumeDigits(unsigned base) {
   if (invalidSeparator) {
     addDiagnostic(
         DiagnosticSeverity::Error,
-        locationAt(tokenStart_.offset + separatorOffset),
+        locationAt(startOffset + separatorOffset),
         "invalid numeric separator");
   }
 }
@@ -2405,7 +2314,7 @@ Token Lexer::lexNumber() {
             location(),
             "invalid character in binary literal");
 
-        recoverAfterLexicalError(false);
+        recoverMalformedToken();
         return finish(TokenKind::Unknown);
       }
 
@@ -2460,26 +2369,25 @@ Token Lexer::lexNumber() {
 
   if (peekChar() == 'e' ||
       peekChar() == 'E') {
-    floating = true;
+    const char exponentSign = peekChar(1);
+    const bool hasDirectDigit =
+        isDecimalDigit(exponentSign);
+    const bool hasSignedDigit =
+        (exponentSign == '+' ||
+         exponentSign == '-') &&
+        isDecimalDigit(peekChar(2));
 
-    consumeChar();
-
-    if (peekChar() == '+' ||
-        peekChar() == '-') {
+    if (hasDirectDigit || hasSignedDigit) {
+      floating = true;
       consumeChar();
+
+      if (peekChar() == '+' ||
+          peekChar() == '-') {
+        consumeChar();
+      }
+
+      consumeDigits(10);
     }
-
-    if (!isDecimalDigit(peekChar())) {
-      addDiagnostic(
-          DiagnosticSeverity::Error,
-          location(),
-          "exponent requires decimal digits");
-
-      recoverMalformedToken();
-      return finish(TokenKind::Unknown);
-    }
-
-    consumeDigits(10);
   }
 
   if (isAsciiIdentifierContinue(peekChar())) {
@@ -2499,13 +2407,11 @@ Token Lexer::lexNumber() {
   return finish(TokenKind::IntegerLiteral);
 }
 
-// Lex a string literal with escape recovery.
-// Lex a string literal with escape and UTF-8 validation.
+// Lex string literals with escape and UTF-8 validation.
 Token Lexer::lexString() {
   beginToken();
 
-  const SourceLocation start =
-      locationAt(tokenStart_.offset);
+  const std::size_t startOffset = tokenStart_.offset;
 
   consumeChar();
 
@@ -2545,7 +2451,7 @@ Token Lexer::lexString() {
         peekChar() == '\r') {
       addDiagnostic(
           DiagnosticSeverity::Error,
-          start,
+          locationAt(startOffset),
           "newline is not allowed in a Sift string literal");
 
       return finish(TokenKind::Unknown);
@@ -2590,26 +2496,24 @@ Token Lexer::lexString() {
 
   addDiagnostic(
       DiagnosticSeverity::Error,
-      start,
+      locationAt(startOffset),
       "unterminated string literal");
 
   return finish(TokenKind::Unknown);
 }
 
-// Lex a character literal with boundary checking.
-// Lex a character literal with delimiter-aware recovery.
+// Lex character literals with delimiter-aware recovery.
 Token Lexer::lexCharacter() {
   beginToken();
 
-  const SourceLocation start =
-      locationAt(tokenStart_.offset);
+  const std::size_t startOffset = tokenStart_.offset;
 
   consumeChar();
 
   if (atEnd()) {
     addDiagnostic(
         DiagnosticSeverity::Error,
-        start,
+        locationAt(startOffset),
         "unterminated character literal");
 
     return finish(TokenKind::Unknown);
@@ -2629,7 +2533,7 @@ Token Lexer::lexCharacter() {
              peekChar() == '\r') {
     addDiagnostic(
         DiagnosticSeverity::Error,
-        start,
+        locationAt(startOffset),
         "newline is not allowed in a character literal");
 
     return finish(TokenKind::Unknown);
@@ -2655,7 +2559,7 @@ Token Lexer::lexCharacter() {
     if (width == 0 || remaining < width) {
       addDiagnostic(
           DiagnosticSeverity::Error,
-          start,
+          locationAt(startOffset),
           "invalid UTF-8 sequence in character literal");
 
       recoverCharacterLiteral();
@@ -2673,7 +2577,7 @@ Token Lexer::lexCharacter() {
                   scalarStart[index]))) {
         addDiagnostic(
             DiagnosticSeverity::Error,
-            start,
+            locationAt(startOffset),
             "invalid UTF-8 sequence in character literal");
 
         recoverCharacterLiteral();
@@ -2692,7 +2596,7 @@ Token Lexer::lexCharacter() {
     if (!validateUTF8(scalarStart, cursor_.current)) {
       addDiagnostic(
           DiagnosticSeverity::Error,
-          start,
+          locationAt(startOffset),
           "invalid UTF-8 sequence in character literal");
 
       return finish(TokenKind::Unknown);
@@ -2704,7 +2608,7 @@ Token Lexer::lexCharacter() {
   if (!consumeIf('\'')) {
     addDiagnostic(
         DiagnosticSeverity::Error,
-        start,
+        locationAt(startOffset),
         "character literal must contain exactly one character");
 
     while (!atEnd() &&
@@ -2721,7 +2625,6 @@ Token Lexer::lexCharacter() {
   return finish(TokenKind::CharacterLiteral);
 }
 
-// Lex a hash-prefixed directive.
 // Lex hash-prefixed directives.
 Token Lexer::lexHashOrDirective() {
   beginToken();
@@ -2756,8 +2659,7 @@ Token Lexer::lexHashOrDirective() {
   return finish(TokenKind::Hash);
 }
 
-// Lex an at-prefixed directive.
-// Lex @ directives through the shared keyword table.
+// Lex @ directives through keyword classification.
 Token Lexer::lexAtOrDirective() {
   beginToken();
 
@@ -2786,7 +2688,6 @@ Token Lexer::lexAtOrDirective() {
   return finish(TokenKind::At);
 }
 
-// Distinguish a comment from the slash operator.
 // Distinguish comments from slash-based operators.
 Token Lexer::lexCommentOrSlash() {
   beginToken();
@@ -2821,7 +2722,6 @@ Token Lexer::lexCommentOrSlash() {
   return finish(TokenKind::Slash);
 }
 
-// Lex punctuation and operators.
 // Lex operators and punctuation using direct character dispatch.
 Token Lexer::lexOperatorOrPunctuation() {
   beginToken();
@@ -2884,7 +2784,6 @@ Token Lexer::lexOperatorOrPunctuation() {
   return finish(TokenKind::Unknown);
 }
 
-// Apply identifier context to the completed token.
 // Apply function-name and calling-name context to identifiers.
 Token Lexer::handleIdentifierContext(Token token) noexcept {
   if (expectingCallingName_ &&
@@ -2896,12 +2795,6 @@ Token Lexer::handleIdentifierContext(Token token) noexcept {
   return token;
 }
 
-// Commit diagnostics produced during successful lookahead.
-void Lexer::commitLookaheadDiagnostics() noexcept {
-  lookaheadDiagnosticCount_ = 0;
-}
-
-// Update contextual lexer state after token formation.
 // Update contextual state after forming a token.
 void Lexer::updateContext(
     TokenKind kind,
@@ -2959,7 +2852,6 @@ void Lexer::updateContext(
   lastWasDot_ = false;
 }
 
-// Save state before speculative lexing.
 // Save lexer state before speculative scanning.
 Lexer::LexState Lexer::saveState() const noexcept {
   return {
@@ -2972,7 +2864,6 @@ Lexer::LexState Lexer::saveState() const noexcept {
   };
 }
 
-// Restore state after speculative lexing.
 // Restore lexer state after speculative scanning.
 void Lexer::restoreState(
     const LexState& state) noexcept {
@@ -3076,19 +2967,15 @@ Token Lexer::lexImpl() {
   }
 }
 
-// Consume the next token.
 // Consume and return the next token.
 Token Lexer::lex() {
   if (hasLookahead_) {
     Token result = lookahead_;
 
     restoreState(lookaheadState_);
-    commitLookaheadDiagnostics();
-
     hasLookahead_ = false;
     lookahead_ = {};
     lookaheadState_ = saveState();
-    lookaheadDiagnosticCount_ = 0;
 
     return result;
   }
@@ -3096,7 +2983,6 @@ Token Lexer::lex() {
   return lexImpl();
 }
 
-// Speculatively lex the next token without committing state.
 // Return the next token without committing cursor state.
 Token Lexer::peek() {
   if (hasLookahead_) {
@@ -3126,7 +3012,6 @@ Token Lexer::peek() {
   return lookahead_;
 }
 
-// Lex the next identifier as a calling name.
 // Lex the next identifier as an explicit calling name.
 Token Lexer::lexCallingName() {
   Token token = lex();
