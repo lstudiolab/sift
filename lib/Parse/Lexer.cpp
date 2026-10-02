@@ -130,7 +130,7 @@ struct KeywordBuckets {
   std::array<int, 256> heads{};
   std::array<int, Keywords.size()> next{};
 
-  constexpr KeywordBuckets() {
+  KeywordBuckets() noexcept {
     heads.fill(-1);
     next.fill(-1);
 
@@ -144,7 +144,7 @@ struct KeywordBuckets {
   }
 };
 
-constexpr KeywordBuckets KeywordIndex{};
+const KeywordBuckets KeywordIndex{};
 
 static_assert(Keywords.size() == 90, "Sift keyword table changed without updating its declared size.");
 
@@ -2562,6 +2562,7 @@ Token Lexer::lexHashOrDirective() {
     return finish(TokenKind::Hash);
   }
 
+  const LexerCursor afterHash = cursor_;
   consumeIdentifier();
 
   const std::string_view spelling(
@@ -2581,6 +2582,7 @@ Token Lexer::lexHashOrDirective() {
     return finish(TokenKind::KeywordEnd);
   }
 
+  cursor_ = afterHash;
   return finish(TokenKind::Hash);
 }
 
@@ -2595,6 +2597,7 @@ Token Lexer::lexAtOrDirective() {
     return finish(TokenKind::At);
   }
 
+  const LexerCursor afterAt = cursor_;
   consumeIdentifier();
 
   const std::string_view spelling(
@@ -2609,6 +2612,7 @@ Token Lexer::lexAtOrDirective() {
     return finish(keyword);
   }
 
+  cursor_ = afterAt;
   return finish(TokenKind::At);
 }
 
@@ -2632,9 +2636,7 @@ Token Lexer::lexCommentOrSlash() {
 
   if (peekChar() == '/' &&
       peekChar(1) == '*') {
-    consumeChar();
-    consumeChar();
-
+    // skipBlockComment() consumes the opening delimiter itself.
     skipBlockComment();
 
     return finish(TokenKind::Comment);
@@ -2829,6 +2831,8 @@ Token Lexer::lexOperatorOrPunctuation() {
       return finish(TokenKind::Tilde);
 
     default:
+      // Consume the offending byte so the lexer always makes progress.
+      consumeChar();
       break;
   }
 
@@ -2980,17 +2984,15 @@ Token Lexer::lexImpl() {
     // Slash is checked before the general operator path because it can
     // begin either a comment or a slash token. Keeping this branch early
     // avoids entering the larger punctuation/operator switch for comments.
-    if (current == '/' &&
-        detail::isPotentialComment(
-            cursor_.current,
-            cursor_.end)) {
-      Token token =
-          lexCommentOrSlash();
+    if (current == '/') {
+      Token token = lexCommentOrSlash();
 
-      if (!options_.retainComments) {
+      if (token.kind == TokenKind::Comment &&
+          !options_.retainComments) {
         continue;
       }
 
+      updateContext(token.kind, token.text);
       return token;
     }
 
