@@ -368,6 +368,738 @@ inline const char* scanUntilLineBreak(
 }
 }
 
+// Recovery mode selects a safe restart strategy after malformed input.
+enum class RecoveryMode : std::uint8_t {
+  Line,
+  Statement,
+  Delimiter,
+  Block,
+  String,
+  Character,
+  Comment,
+  Directive,
+  Number,
+  Operator,
+  Identifier,
+  UTF8
+};
+
+// Find a newline synchronization point.
+inline const char* recoveryLine(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end) {
+    if (*current == '\n' || *current == '\r') {
+      return current;
+    }
+    ++current;
+  }
+  return end;
+}
+
+// Find a statement synchronization point while respecting braces.
+inline const char* recoveryStatement(
+    const char* current,
+    const char* end) noexcept {
+  unsigned depth = 0;
+
+  while (current < end) {
+    const char value = *current;
+
+    if (value == '{') {
+      ++depth;
+      ++current;
+      continue;
+    }
+
+    if (value == '}') {
+      if (depth == 0) {
+        return current;
+      }
+      --depth;
+      ++current;
+      continue;
+    }
+
+    if (value == ';' && depth == 0) {
+      return current;
+    }
+
+    if (value == '\n' || value == '\r') {
+      return current;
+    }
+
+    ++current;
+  }
+
+  return end;
+}
+
+// Find a delimiter synchronization point while tracking nesting.
+inline const char* recoveryDelimiter(
+    const char* current,
+    const char* end) noexcept {
+  unsigned parentheses = 0;
+  unsigned brackets = 0;
+  unsigned braces = 0;
+
+  while (current < end) {
+    const char value = *current;
+
+    if (value == '(') ++parentheses;
+    if (value == '[') ++brackets;
+    if (value == '{') ++braces;
+
+    if (value == ')' && parentheses != 0) --parentheses;
+    if (value == ']' && brackets != 0) --brackets;
+    if (value == '}' && braces != 0) --braces;
+
+    if ((value == ')' || value == ']' || value == '}') &&
+        parentheses == 0 &&
+        brackets == 0 &&
+        braces == 0) {
+      return current;
+    }
+
+    if (value == ',' &&
+        parentheses == 0 &&
+        brackets == 0 &&
+        braces == 0) {
+      return current;
+    }
+
+    if (value == '\n' || value == '\r') {
+      return current;
+    }
+
+    ++current;
+  }
+
+  return end;
+}
+
+// Find the end of a damaged balanced block.
+inline const char* recoveryBlock(
+    const char* current,
+    const char* end) noexcept {
+  unsigned braces = 0;
+  unsigned parentheses = 0;
+  unsigned brackets = 0;
+
+  while (current < end) {
+    const char value = *current;
+
+    if (value == '{') ++braces;
+    if (value == '(') ++parentheses;
+    if (value == '[') ++brackets;
+
+    if (value == ')' && parentheses != 0) --parentheses;
+    if (value == ']' && brackets != 0) --brackets;
+
+    if (value == '}') {
+      if (braces == 0) {
+        return current;
+      }
+
+      --braces;
+
+      if (braces == 0 &&
+          parentheses == 0 &&
+          brackets == 0) {
+        return current + 1;
+      }
+    }
+
+    ++current;
+  }
+
+  return end;
+}
+
+// Find a string recovery point without stopping on escaped quotes.
+inline const char* recoveryString(
+    const char* current,
+    const char* end) noexcept {
+  bool escaped = false;
+
+  while (current < end) {
+    const char value = *current;
+
+    if (escaped) {
+      escaped = false;
+      ++current;
+      continue;
+    }
+
+    if (value == '\\') {
+      escaped = true;
+      ++current;
+      continue;
+    }
+
+    if (value == '"' ||
+        value == '\n' ||
+        value == '\r') {
+      return current;
+    }
+
+    ++current;
+  }
+
+  return end;
+}
+
+// Find a character recovery point without stopping on escaped quotes.
+inline const char* recoveryCharacter(
+    const char* current,
+    const char* end) noexcept {
+  bool escaped = false;
+
+  while (current < end) {
+    const char value = *current;
+
+    if (escaped) {
+      escaped = false;
+      ++current;
+      continue;
+    }
+
+    if (value == '\\') {
+      escaped = true;
+      ++current;
+      continue;
+    }
+
+    if (value == '\'' ||
+        value == '\n' ||
+        value == '\r') {
+      return current;
+    }
+
+    ++current;
+  }
+
+  return end;
+}
+
+// Find the end of a nested block comment.
+inline const char* recoveryBlockComment(
+    const char* current,
+    const char* end) noexcept {
+  unsigned depth = 1;
+
+  while (current < end) {
+    if (*current == '/' &&
+        current + 1 < end &&
+        current[1] == '*') {
+      ++depth;
+      current += 2;
+      continue;
+    }
+
+    if (*current == '*' &&
+        current + 1 < end &&
+        current[1] == '/') {
+      --depth;
+      current += 2;
+
+      if (depth == 0) {
+        return current;
+      }
+
+      continue;
+    }
+
+    ++current;
+  }
+
+  return end;
+}
+
+// Find the end of a line comment.
+inline const char* recoveryLineComment(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end) {
+    if (*current == '\n' ||
+        *current == '\r') {
+      return current;
+    }
+
+    ++current;
+  }
+
+  return end;
+}
+
+// Find a safe restart point after a malformed directive.
+inline const char* recoveryDirective(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end) {
+    const char value = *current;
+
+    if (value == '@' ||
+        value == '#') {
+      return current;
+    }
+
+    if (value == ';' ||
+        value == '{' ||
+        value == '}' ||
+        value == '\n' ||
+        value == '\r') {
+      return current;
+    }
+
+    if (value == ' ' ||
+        value == '\t') {
+      return current;
+    }
+
+    if (value == '/' &&
+        current + 1 < end &&
+        (current[1] == '/' ||
+         current[1] == '*')) {
+      return current;
+    }
+
+    ++current;
+  }
+
+  return end;
+}
+
+// Find the end of a malformed numeric literal.
+inline const char* recoveryNumber(
+    const char* current,
+    const char* end) noexcept {
+  bool point = false;
+  bool exponent = false;
+  bool separator = false;
+
+  while (current < end) {
+    const char value = *current;
+
+    if (isDecimalDigit(value)) {
+      separator = false;
+      ++current;
+      continue;
+    }
+
+    if (value == '_' &&
+        !separator) {
+      separator = true;
+      ++current;
+      continue;
+    }
+
+    if (value == '.' &&
+        !point) {
+      point = true;
+      ++current;
+      continue;
+    }
+
+    if ((value == 'e' ||
+         value == 'E') &&
+        !exponent) {
+      exponent = true;
+      ++current;
+
+      if (current < end &&
+          (*current == '+' ||
+           *current == '-')) {
+        ++current;
+      }
+
+      continue;
+    }
+
+    break;
+  }
+
+  return current;
+}
+
+// Find the end of a malformed operator sequence.
+inline const char* recoveryOperator(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end) {
+    const char value = *current;
+
+    if (value == '=' ||
+        value == '!' ||
+        value == '+' ||
+        value == '-' ||
+        value == '*' ||
+        value == '%' ||
+        value == '<' ||
+        value == '>' ||
+        value == '&' ||
+        value == '|' ||
+        value == '~') {
+      ++current;
+      continue;
+    }
+
+    if (value == '/') {
+      if (current + 1 < end &&
+          (current[1] == '/' ||
+           current[1] == '*')) {
+        return current;
+      }
+
+      ++current;
+      continue;
+    }
+
+    return current;
+  }
+
+  return end;
+}
+
+// Find the end of a malformed identifier sequence.
+inline const char* recoveryIdentifier(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end) {
+    const char value = *current;
+
+    if (value == ' ' ||
+        value == '\t' ||
+        value == '\n' ||
+        value == '\r' ||
+        value == ';' ||
+        value == ',' ||
+        value == ':' ||
+        value == '.' ||
+        value == '?' ||
+        value == '(' ||
+        value == ')' ||
+        value == '{' ||
+        value == '}' ||
+        value == '[' ||
+        value == ']' ||
+        value == '=' ||
+        value == '+' ||
+        value == '-') {
+      return current;
+    }
+
+    ++current;
+  }
+
+  return end;
+}
+
+// Consume one invalid UTF-8 sequence without stalling.
+inline const char* recoveryUTF8(
+    const char* current,
+    const char* end) noexcept {
+  if (current >= end) {
+    return end;
+  }
+
+  const unsigned char first =
+      static_cast<unsigned char>(*current);
+
+  if (first < 0x80u) {
+    return current + 1;
+  }
+
+  unsigned width = 0;
+
+  if (first >= 0xc2u &&
+      first <= 0xdfu) {
+    width = 2;
+  } else if (first >= 0xe0u &&
+             first <= 0xefu) {
+    width = 3;
+  } else if (first >= 0xf0u &&
+             first <= 0xf4u) {
+    width = 4;
+  } else {
+    return current + 1;
+  }
+
+  ++current;
+
+  for (unsigned index = 1;
+       index < width;
+       ++index) {
+    if (current >= end) {
+      return current;
+    }
+
+    if (!isContinuationByte(
+            static_cast<unsigned char>(*current))) {
+      return current;
+    }
+
+    ++current;
+  }
+
+  return current;
+}
+
+// Choose the recovery family from the malformed token's first byte.
+inline RecoveryMode chooseRecoveryMode(
+    char value) noexcept {
+  if (value == '"') {
+    return RecoveryMode::String;
+  }
+
+  if (value == '\'') {
+    return RecoveryMode::Character;
+  }
+
+  if (value == '/') {
+    return RecoveryMode::Comment;
+  }
+
+  if (value == '@' ||
+      value == '#') {
+    return RecoveryMode::Directive;
+  }
+
+  if (isDecimalDigit(value)) {
+    return RecoveryMode::Number;
+  }
+
+  if (value == '=' ||
+      value == '!' ||
+      value == '+' ||
+      value == '-' ||
+      value == '*' ||
+      value == '%' ||
+      value == '<' ||
+      value == '>' ||
+      value == '&' ||
+      value == '|' ||
+      value == '~') {
+    return RecoveryMode::Operator;
+  }
+
+  if (isAsciiLetter(value) ||
+      value == '_' ||
+      value == '$') {
+    return RecoveryMode::Identifier;
+  }
+
+  if (value == '(' ||
+      value == ')' ||
+      value == '[' ||
+      value == ']' ||
+      value == '{' ||
+      value == '}') {
+    return RecoveryMode::Delimiter;
+  }
+
+  if (static_cast<unsigned char>(value) >= 0x80u) {
+    return RecoveryMode::UTF8;
+  }
+
+  return RecoveryMode::Line;
+}
+
+// Select the correct recovery scanner.
+inline const char* chooseRecoveryTarget(
+    const char* current,
+    const char* end,
+    RecoveryMode mode) noexcept {
+  switch (mode) {
+    case RecoveryMode::Line:
+      return recoveryLine(current, end);
+    case RecoveryMode::Statement:
+      return recoveryStatement(current, end);
+    case RecoveryMode::Delimiter:
+      return recoveryDelimiter(current, end);
+    case RecoveryMode::Block:
+      return recoveryBlock(current, end);
+    case RecoveryMode::String:
+      return recoveryString(current, end);
+    case RecoveryMode::Character:
+      return recoveryCharacter(current, end);
+    case RecoveryMode::Comment:
+      if (current + 1 < end &&
+          current[1] == '*') {
+        return recoveryBlockComment(
+            current + 2,
+            end);
+      }
+      return recoveryLineComment(current, end);
+    case RecoveryMode::Directive:
+      return recoveryDirective(current, end);
+    case RecoveryMode::Number:
+      return recoveryNumber(current, end);
+    case RecoveryMode::Operator:
+      return recoveryOperator(current, end);
+    case RecoveryMode::Identifier:
+      return recoveryIdentifier(current, end);
+    case RecoveryMode::UTF8:
+      return recoveryUTF8(current, end);
+  }
+
+  return current;
+}
+
+// Consume a recovery range while preserving line and column accounting.
+inline bool consumeRecoveryRange(
+    LexerCursor& cursor,
+    const char* target) noexcept {
+  if (cursor.current >= target) {
+    return false;
+  }
+
+  while (cursor.current < target) {
+    const char value = *cursor.current;
+
+    if (value == '\r') {
+      ++cursor.current;
+      ++cursor.offset;
+
+      if (cursor.current < target &&
+          *cursor.current == '\n') {
+        ++cursor.current;
+        ++cursor.offset;
+      }
+
+      ++cursor.line;
+      cursor.column = 1;
+      continue;
+    }
+
+    ++cursor.current;
+    ++cursor.offset;
+
+    if (value == '\n') {
+      ++cursor.line;
+      cursor.column = 1;
+    } else {
+      ++cursor.column;
+    }
+  }
+
+  return true;
+}
+
+// Force one-byte progress when a structured recovery pass cannot advance.
+inline bool forceRecoveryProgress(
+    LexerCursor& cursor) noexcept {
+  if (cursor.current >= cursor.end) {
+    return false;
+  }
+
+  const char value = *cursor.current;
+
+  if (value == '\r') {
+    ++cursor.current;
+    ++cursor.offset;
+
+    if (cursor.current < cursor.end &&
+        *cursor.current == '\n') {
+      ++cursor.current;
+      ++cursor.offset;
+    }
+
+    ++cursor.line;
+    cursor.column = 1;
+    return true;
+  }
+
+  ++cursor.current;
+  ++cursor.offset;
+
+  if (value == '\n') {
+    ++cursor.line;
+    cursor.column = 1;
+  } else {
+    ++cursor.column;
+  }
+
+  return true;
+}
+
+// Broaden recovery from a token-local boundary to a statement boundary.
+inline RecoveryMode broadenRecovery(
+    RecoveryMode mode) noexcept {
+  switch (mode) {
+    case RecoveryMode::String:
+    case RecoveryMode::Character:
+      return RecoveryMode::Line;
+    case RecoveryMode::Comment:
+    case RecoveryMode::Directive:
+    case RecoveryMode::Number:
+    case RecoveryMode::Identifier:
+      return RecoveryMode::Statement;
+    case RecoveryMode::Operator:
+    case RecoveryMode::Delimiter:
+      return RecoveryMode::Block;
+    case RecoveryMode::UTF8:
+      return RecoveryMode::Line;
+    case RecoveryMode::Line:
+      return RecoveryMode::Statement;
+    case RecoveryMode::Statement:
+      return RecoveryMode::Block;
+    case RecoveryMode::Block:
+      return RecoveryMode::Line;
+  }
+
+  return RecoveryMode::Line;
+}
+
+// Run bounded recovery attempts before using the final escape hatch.
+inline bool runRecoveryBackDoors(
+    LexerCursor& cursor,
+    RecoveryMode mode) noexcept {
+  RecoveryMode current = mode;
+
+  for (unsigned attempt = 0;
+       attempt < 6;
+       ++attempt) {
+    const char* start = cursor.current;
+    const char* target =
+        chooseRecoveryTarget(
+            start,
+            cursor.end,
+            current);
+
+    if (consumeRecoveryRange(
+            cursor,
+            target)) {
+      return true;
+    }
+
+    current =
+        broadenRecovery(
+            current);
+  }
+
+  return forceRecoveryProgress(cursor);
+}
+
+// Recover malformed source while guaranteeing forward progress.
+inline bool executeRecoveryBackDoor(
+    LexerCursor& cursor,
+    RecoveryMode mode) noexcept {
+  const char* start = cursor.current;
+
+  if (runRecoveryBackDoors(
+          cursor,
+          mode)) {
+    return true;
+  }
+
+  if (cursor.current != start) {
+    return true;
+  }
+
+  return forceRecoveryProgress(cursor);
+}
+
 } // namespace detail
 
 // Initialize the lexer over the source buffer.
@@ -585,47 +1317,29 @@ void Lexer::addDiagnostic(
 // Recover from malformed input at a safe scanning boundary.
 void Lexer::recoverAfterLexicalError(
     bool stopAtLineBreak) noexcept {
-  const char* recoveryStart = cursor_.current;
+  const char* start = cursor_.current;
 
-  while (!atEnd()) {
-    const char value = peekChar();
-
-    if (value == '\n' ||
-        value == '\r') {
-      if (stopAtLineBreak) {
-        break;
-      }
-
-      consumeChar();
-      continue;
-    }
-
-    if (isAsciiSpace(value)) {
-      break;
-    }
-
-    if (detail::isPunctuationLeadByte(value)) {
-      break;
-    }
-
-    if (value == '/' &&
-        (peekChar(1) == '/' ||
-         peekChar(1) == '*')) {
-      break;
-    }
-
-    if (detail::isOperatorLeadByte(value)) {
-      break;
-    }
-
-    consumeChar();
+  if (atEnd()) {
+    return;
   }
 
-  if (cursor_.current == recoveryStart &&
-      !atEnd() &&
-      peekChar() != '\n' &&
-      peekChar() != '\r') {
-    consumeChar();
+  if (stopAtLineBreak &&
+      (peekChar() == '\n' ||
+       peekChar() == '\r')) {
+    return;
+  }
+
+  RecoveryMode mode =
+      chooseRecoveryMode(
+          peekChar());
+
+  if (!executeRecoveryBackDoor(
+          cursor_,
+          mode) &&
+      cursor_.current == start &&
+      !atEnd()) {
+    forceRecoveryAdvance(
+        cursor_);
   }
 }
 
