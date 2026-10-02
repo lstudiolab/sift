@@ -89,6 +89,11 @@ private:
       SourceLocation location,
       std::string_view message);
 
+  void recoverAfterLexicalError(
+      bool stopAtLineBreak = true) noexcept;
+
+  void recoverMalformedToken() noexcept;
+
   Token lexImpl();
   Token lexIdentifierOrKeyword();
   Token lexNumber();
