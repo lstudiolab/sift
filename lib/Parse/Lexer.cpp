@@ -120,27 +120,6 @@ constexpr std::array<KeywordEntry, 90> Keywords = {{
   {"panic", TokenKind::KeywordPanic}
 }};
 
-struct KeywordBuckets {
-  std::array<int, 256> heads{};
-  std::array<int, Keywords.size()> next{};
-
-  KeywordBuckets() noexcept {
-    heads.fill(-1);
-    next.fill(-1);
-
-    for (std::size_t index = 0; index < Keywords.size(); ++index) {
-      const unsigned char first =
-          static_cast<unsigned char>(Keywords[index].spelling.front());
-
-      next[index] = heads[first];
-      heads[first] = static_cast<int>(index);
-    }
-  }
-};
-
-const KeywordBuckets KeywordIndex{};
-
-static_assert(Keywords.size() == 90, "Sift keyword table changed without updating its declared size.");
 
 // Check whether a byte continues a UTF-8 scalar.
 constexpr bool isContinuationByte(unsigned char value) noexcept {
@@ -1348,33 +1327,143 @@ unsigned Lexer::hexValue(char value) noexcept {
 }
 
 TokenKind Lexer::classifyKeyword(std::string_view text) noexcept {
-  // Sift keywords are a closed part of the grammar.
-  // First-byte dispatch narrows the candidate set before exact comparison.
-  // No runtime map, hashing pass, or temporary string is used.
-
-  if (text.empty() ||
-      text.size() > 16u) {
+  if (text.empty()) {
     return TokenKind::Identifier;
   }
 
-  const unsigned char first =
-      static_cast<unsigned char>(text.front());
-
-  int keywordIndex =
-      KeywordIndex.heads[first];
-
-  while (keywordIndex >= 0) {
-    const KeywordEntry& keyword =
-        Keywords[static_cast<std::size_t>(keywordIndex)];
-
-    if (keyword.spelling.size() == text.size() &&
-        keyword.spelling == text) {
-      return keyword.kind;
-    }
-
-    keywordIndex =
-        KeywordIndex.next[
-            static_cast<std::size_t>(keywordIndex)];
+  switch (text.front()) {
+    case 'v':
+      if (text == "var") return TokenKind::KeywordVar;
+      break;
+    case 'c':
+      if (text == "const") return TokenKind::KeywordConst;
+      if (text == "class") return TokenKind::KeywordClass;
+      if (text == "case") return TokenKind::KeywordCase;
+      if (text == "continue") return TokenKind::KeywordContinue;
+      if (text == "call") return TokenKind::KeywordCall;
+      if (text == "catch") return TokenKind::KeywordCatch;
+      if (text == "createData") return TokenKind::KeywordCreateData;
+      if (text == "control") return TokenKind::KeywordControl;
+      if (text == "connect") return TokenKind::KeywordConnect;
+      break;
+    case 'f':
+      if (text == "function") return TokenKind::KeywordFunction;
+      if (text == "for") return TokenKind::KeywordFor;
+      if (text == "false") return TokenKind::KeywordFalse;
+      if (text == "final") return TokenKind::KeywordFinal;
+      if (text == "file") return TokenKind::KeywordFile;
+      break;
+    case 'i':
+      if (text == "init") return TokenKind::KeywordInit;
+      if (text == "if") return TokenKind::KeywordIf;
+      if (text == "in") return TokenKind::KeywordIn;
+      if (text == "int") return TokenKind::KeywordInt;
+      if (text == "import") return TokenKind::KeywordImport;
+      if (text == "increase") return TokenKind::KeywordIncrease;
+      break;
+    case 'd':
+      if (text == "deinit") return TokenKind::KeywordDeinit;
+      if (text == "defat") return TokenKind::KeywordDefat;
+      if (text == "do") return TokenKind::KeywordDo;
+      if (text == "defer") return TokenKind::KeywordDefer;
+      if (text == "decrease") return TokenKind::KeywordDecrease;
+      if (text == "data") return TokenKind::KeywordData;
+      if (text == "delete") return TokenKind::KeywordDelete;
+      if (text == "destroy") return TokenKind::KeywordDestroy;
+      break;
+    case 't':
+      if (text == "type") return TokenKind::KeywordType;
+      if (text == "typealias") return TokenKind::KeywordTypealias;
+      if (text == "throws") return TokenKind::KeywordThrows;
+      if (text == "throw") return TokenKind::KeywordThrow;
+      if (text == "try") return TokenKind::KeywordTry;
+      if (text == "task") return TokenKind::KeywordTask;
+      if (text == "true") return TokenKind::KeywordTrue;
+      break;
+    case 's':
+      if (text == "struct") return TokenKind::KeywordStruct;
+      if (text == "switch") return TokenKind::KeywordSwitch;
+      if (text == "self") return TokenKind::KeywordSelf;
+      if (text == "some") return TokenKind::KeywordSome;
+      if (text == "string") return TokenKind::KeywordString;
+      if (text == "static") return TokenKind::KeywordStatic;
+      if (text == "section") return TokenKind::KeywordSection;
+      break;
+    case 'e':
+      if (text == "enum") return TokenKind::KeywordEnum;
+      if (text == "extension") return TokenKind::KeywordExtension;
+      if (text == "else") return TokenKind::KeywordElse;
+      if (text == "end") return TokenKind::KeywordEnd;
+      if (text == "export") return TokenKind::KeywordExport;
+      if (text == "error") return TokenKind::KeywordError;
+      break;
+    case 'p':
+      if (text == "protocol") return TokenKind::KeywordProtocol;
+      if (text == "public") return TokenKind::KeywordPublic;
+      if (text == "private") return TokenKind::KeywordPrivate;
+      if (text == "protect") return TokenKind::KeywordProtect;
+      if (text == "package") return TokenKind::KeywordPackage;
+      if (text == "panic") return TokenKind::KeywordPanic;
+      break;
+    case 'g':
+      if (text == "guard") return TokenKind::KeywordGuard;
+      if (text == "getData") return TokenKind::KeywordGetData;
+      break;
+    case 'w':
+      if (text == "while") return TokenKind::KeywordWhile;
+      if (text == "wait") return TokenKind::KeywordWait;
+      break;
+    case 'r':
+      if (text == "repeat") return TokenKind::KeywordRepeat;
+      if (text == "return") return TokenKind::KeywordReturn;
+      if (text == "rethrow") return TokenKind::KeywordRethrow;
+      if (text == "required") return TokenKind::KeywordRequired;
+      break;
+    case 'l':
+      if (text == "loop") return TokenKind::KeywordLoop;
+      break;
+    case 'b':
+      if (text == "break") return TokenKind::KeywordBreak;
+      if (text == "bool") return TokenKind::KeywordBool;
+      if (text == "bytes") return TokenKind::KeywordBytes;
+      if (text == "backup") return TokenKind::KeywordBackup;
+      if (text == "binary") return TokenKind::KeywordBinary;
+      break;
+    case 'a':
+      if (text == "async") return TokenKind::KeywordAsync;
+      if (text == "await") return TokenKind::KeywordAwait;
+      if (text == "any") return TokenKind::KeywordAny;
+      if (text == "abs") return TokenKind::KeywordAbs;
+      break;
+    case 'n':
+      if (text == "num") return TokenKind::KeywordNum;
+      break;
+    case 'o':
+      if (text == "open") return TokenKind::KeywordOpen;
+      if (text == "overRide") return TokenKind::KeywordOverRide;
+      if (text == "os") return TokenKind::KeywordOS;
+      if (text == "output") return TokenKind::KeywordOutput;
+      break;
+    case 'm':
+      if (text == "module") return TokenKind::KeywordModule;
+      if (text == "message") return TokenKind::KeywordMessage;
+      if (text == "math") return TokenKind::KeywordMath;
+      if (text == "min") return TokenKind::KeywordMin;
+      if (text == "max") return TokenKind::KeywordMax;
+      break;
+    case '@':
+      if (text == "@file") return TokenKind::KeywordFile;
+      if (text == "@fileID") return TokenKind::KeywordFileID;
+      if (text == "@api") return TokenKind::KeywordAPI;
+      if (text == "@repo") return TokenKind::KeywordRepo;
+      if (text == "@webLink") return TokenKind::KeywordWebLink;
+      if (text == "@database") return TokenKind::KeywordDatabase;
+      break;
+    case 'k':
+      if (text == "kernel") return TokenKind::KeywordKernel;
+      break;
+    default:
+      break;
   }
 
   return TokenKind::Identifier;
@@ -1990,13 +2079,7 @@ void Lexer::consumeDigits(unsigned base) {
         DiagnosticSeverity::Error,
         locationAt(tokenStart_.offset + separatorOffset),
         "invalid numeric separator");
-  } else if (sawSeparator && current > begin && current[-1] == '_') {
-    addDiagnostic(
-        DiagnosticSeverity::Error,
-        {cursor_.offset - 1,
-         location().line,
-         location().column - 1},
-        "numeric literal cannot end with a separator");
+  }
   }
 }
 
