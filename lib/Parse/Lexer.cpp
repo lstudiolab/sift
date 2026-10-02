@@ -32,6 +32,7 @@ struct KeywordEntry {
   std::uint64_t hash;
 };
 
+// Hash a keyword spelling for fast deterministic lookup.
 constexpr std::uint64_t fnv1a(std::string_view text) noexcept {
   std::uint64_t value = 14695981039346656037ull;
 
@@ -158,6 +159,7 @@ constexpr KeywordBuckets KeywordIndex{};
 
 static_assert(Keywords.size() == 90, "Sift keyword table changed without updating its declared size.");
 
+// Check whether a byte continues a UTF-8 scalar.
 constexpr bool isContinuationByte(unsigned char value) noexcept {
   return (value & 0xc0u) == 0x80u;
 }
@@ -192,6 +194,7 @@ constexpr bool isAsciiIdentifierStart(char value) noexcept {
          value == '_';
 }
 
+// Check that enough source bytes remain before reading ahead.
 inline bool hasBytes(
     const char* current,
     const char* end,
@@ -203,6 +206,7 @@ inline bool hasBytes(
   return static_cast<std::size_t>(end - current) >= count;
 }
 
+// Detect a UTF-8 byte-order mark at the source start.
 inline bool startsBOM(
     const char* current,
     const char* end) noexcept {
@@ -212,6 +216,7 @@ inline bool startsBOM(
          byteOf(current[2]) == 0xbfu;
 }
 
+// Check whether the current slash can begin a comment.
 inline bool isPotentialComment(
     const char* current,
     const char* end) noexcept {
@@ -220,12 +225,14 @@ inline bool isPotentialComment(
          (current[1] == '/' || current[1] == '*');
 }
 
+// Check whether a character can begin an identifier.
 inline bool isPotentialIdentifier(
     char current) noexcept {
   return isAsciiIdentifierStart(current) ||
          byteOf(current) >= 0x80u;
 }
 
+// Reject keyword candidates that cannot match the source spelling.
 inline bool keywordCandidateCanMatch(
     std::string_view text) noexcept {
   if (text.empty()) {
@@ -245,6 +252,7 @@ inline bool keywordCandidateCanMatch(
   return true;
 }
 
+// Check for horizontal whitespace handled by the fast path.
 inline bool isHorizontalWhitespace(char value) noexcept {
   return value == ' ' ||
          value == '\t' ||
@@ -253,6 +261,7 @@ inline bool isHorizontalWhitespace(char value) noexcept {
 }
 
 
+// Check whether a byte can begin an operator.
 inline bool isOperatorLeadByte(char value) noexcept {
   return value == '=' ||
          value == '!' ||
@@ -267,6 +276,7 @@ inline bool isOperatorLeadByte(char value) noexcept {
          value == '~';
 }
 
+// Check whether a byte can begin punctuation.
 inline bool isPunctuationLeadByte(char value) noexcept {
   return value == '(' ||
          value == ')' ||
@@ -281,22 +291,27 @@ inline bool isPunctuationLeadByte(char value) noexcept {
          value == '?';
 }
 
+// Recognize a string literal delimiter.
 inline bool isDoubleQuote(char value) noexcept {
   return value == '"';
 }
 
+// Recognize a character literal delimiter.
 inline bool isSingleQuote(char value) noexcept {
   return value == '\'';
 }
 
+// Recognize a hash-prefixed directive.
 inline bool isHashLead(char value) noexcept {
   return value == '#';
 }
 
+// Recognize an at-prefixed directive.
 inline bool isAtLead(char value) noexcept {
   return value == '@';
 }
 
+// Scan an ASCII identifier using the contiguous source buffer.
 inline const char* scanAsciiIdentifier(
     const char* current,
     const char* end) noexcept {
@@ -322,6 +337,7 @@ inline const char* scanAsciiIdentifier(
   return current;
 }
 
+// Scan horizontal whitespace without forming tokens.
 inline const char* scanHorizontalWhitespace(
     const char* current,
     const char* end) noexcept {
@@ -333,6 +349,7 @@ inline const char* scanHorizontalWhitespace(
   return current;
 }
 
+// Scan forward to the next line boundary.
 inline const char* scanUntilLineBreak(
     const char* current,
     const char* end) noexcept {
@@ -354,6 +371,7 @@ inline const char* scanUntilLineBreak(
 } // namespace detail
 
 // Initialize the lexer over the source buffer.
+// Initialize the lexer with source storage and scanning options.
 Lexer::Lexer(std::string_view source, LexerOptions options) noexcept
     : source_(source),
       options_(options) {
@@ -367,6 +385,7 @@ Lexer::Lexer(std::string_view source, LexerOptions options) noexcept
 }
 
 // Reset the lexer state to the start of the source.
+// Reset all lexer state so scanning can start from the beginning.
 void Lexer::reset() noexcept {
   cursor_.current = source_.data();
   cursor_.end = source_.data() + source_.size();
@@ -388,6 +407,7 @@ void Lexer::reset() noexcept {
   diagnostics_.clear();
 }
 
+// Check whether the source cursor reached the end.
 bool Lexer::atEnd() const noexcept {
   return cursor_.current >= cursor_.end;
 }
@@ -396,6 +416,7 @@ std::size_t Lexer::offset() const noexcept {
   return cursor_.offset;
 }
 
+// Return the current source location.
 SourceLocation Lexer::location() const noexcept {
   return {
       cursor_.offset,
@@ -408,6 +429,7 @@ const std::vector<Diagnostic>& Lexer::diagnostics() const noexcept {
   return diagnostics_;
 }
 
+// Check whether lexing has produced an error diagnostic.
 bool Lexer::hasErrors() const noexcept {
   for (const Diagnostic& diagnostic : diagnostics_) {
     if (diagnostic.severity == DiagnosticSeverity::Error) {
@@ -419,6 +441,7 @@ bool Lexer::hasErrors() const noexcept {
 }
 
 // Read ahead without advancing the cursor.
+// Read ahead without advancing the lexer cursor.
 char Lexer::peekChar(std::size_t distance) const noexcept {
   const std::size_t remaining =
       static_cast<std::size_t>(cursor_.end - cursor_.current);
@@ -431,6 +454,7 @@ char Lexer::peekChar(std::size_t distance) const noexcept {
 }
 
 // Consume one character and update its source location.
+// Consume one byte and update its source position.
 char Lexer::consumeChar() noexcept {
   if (atEnd()) {
     return '\0';
@@ -467,6 +491,7 @@ char Lexer::consumeChar() noexcept {
   return value;
 }
 
+// Consume one character only when it matches the expected value.
 bool Lexer::consumeIf(char value) noexcept {
   if (peekChar() != value) {
     return false;
@@ -476,6 +501,7 @@ bool Lexer::consumeIf(char value) noexcept {
   return true;
 }
 
+// Consume a complete spelling only when it matches the source.
 bool Lexer::consumeIf(std::string_view value) noexcept {
   const std::size_t length =
       value.size();
@@ -508,6 +534,7 @@ bool Lexer::consumeIf(std::string_view value) noexcept {
 }
 
 // Record the start of the next token.
+// Record the source position where the next token begins.
 void Lexer::beginToken() noexcept {
   tokenStart_ = cursor_;
 }
@@ -529,6 +556,7 @@ Token Lexer::makeToken(
 }
 
 // Form a zero-copy token from the current source range.
+// Finish the current token using its recorded source range.
 Token Lexer::finish(TokenKind kind) noexcept {
   return makeToken(
       kind,
@@ -541,6 +569,7 @@ Token Lexer::finish(TokenKind kind) noexcept {
       });
 }
 
+// Record a diagnostic while allowing lexing to continue.
 void Lexer::addDiagnostic(
     DiagnosticSeverity severity,
     SourceLocation diagnosticLocation,
@@ -553,6 +582,7 @@ void Lexer::addDiagnostic(
 }
 
 // Recover from malformed input at a safe boundary.
+// Recover from malformed input at a safe scanning boundary.
 void Lexer::recoverAfterLexicalError(
     bool stopAtLineBreak) noexcept {
   const char* recoveryStart = cursor_.current;
@@ -600,11 +630,13 @@ void Lexer::recoverAfterLexicalError(
 }
 
 // Recover the current malformed token and continue lexing.
+// Skip an invalid token while guaranteeing forward progress.
 void Lexer::recoverMalformedToken() noexcept {
   recoverAfterLexicalError(true);
 }
 
 // Recover a malformed string up to its delimiter.
+// Recover a malformed string up to its delimiter or line end.
 void Lexer::recoverStringLiteral() noexcept {
   while (!atEnd()) {
     const char value = peekChar();
@@ -620,6 +652,7 @@ void Lexer::recoverStringLiteral() noexcept {
 }
 
 // Recover a malformed character up to its delimiter.
+// Recover a malformed character up to its delimiter or line end.
 void Lexer::recoverCharacterLiteral() noexcept {
   while (!atEnd()) {
     const char value = peekChar();
@@ -673,6 +706,7 @@ unsigned Lexer::hexValue(char value) noexcept {
   return static_cast<unsigned>(value - 'A' + 10);
 }
 
+// Compute the deterministic hash used for keyword classification.
 std::uint64_t Lexer::keywordHash(std::string_view text) noexcept {
   return fnv1a(text);
 }
@@ -750,10 +784,12 @@ TokenKind Lexer::keywordKind(std::string_view text) noexcept {
   return classifyKeyword(text);
 }
 
+// Determine whether a spelling is a reserved Sift keyword.
 bool Lexer::isKeyword(std::string_view text) noexcept {
   return classifyKeyword(text) != TokenKind::Identifier;
 }
 
+// Return the stable diagnostic name for a token kind.
 std::string_view Lexer::tokenName(TokenKind kind) noexcept {
   switch (kind) {
     case TokenKind::EndOfFile:
@@ -1072,6 +1108,7 @@ bool Lexer::isIdentifierContinue(char value) const noexcept {
   return static_cast<unsigned char>(value) >= 0x80u;
 }
 
+// Consume an identifier with the ASCII fast path.
 void Lexer::consumeIdentifier() {
   const char* begin = cursor_.current;
 
@@ -1103,6 +1140,7 @@ void Lexer::consumeIdentifier() {
   }
 }
 
+// Consume an identifier containing UTF-8 characters.
 void Lexer::consumeUnicodeIdentifier() {
   while (!atEnd()) {
     const unsigned char value =
@@ -1116,6 +1154,7 @@ void Lexer::consumeUnicodeIdentifier() {
   }
 }
 
+// Skip whitespace and normalize supported line endings.
 void Lexer::skipWhitespace() {
   for (;;) {
     if (atEnd()) {
@@ -1169,6 +1208,7 @@ void Lexer::skipWhitespace() {
   }
 }
 
+// Skip a semicolon line comment.
 void Lexer::skipLineComment() {
   const char* begin =
       cursor_.current;
@@ -1187,6 +1227,7 @@ void Lexer::skipLineComment() {
   cursor_.column += consumed;
 }
 
+// Skip a nested block comment and diagnose unterminated input.
 void Lexer::skipBlockComment() {
   const SourceLocation start = location();
 
@@ -1231,6 +1272,7 @@ void Lexer::skipBlockComment() {
   // a comment token instead of throwing or entering another scan loop.
 }
 
+// Consume digits for an integer or floating-point component.
 void Lexer::consumeDigits(unsigned base) {
   bool sawDigit = false;
   bool previousWasSeparator = false;
@@ -1301,6 +1343,7 @@ void Lexer::consumeDigits(unsigned base) {
   }
 }
 
+// Consume and validate one string or character escape.
 bool Lexer::consumeEscapeSequence() {
   if (!consumeIf('\\')) {
     return false;
@@ -1355,6 +1398,7 @@ bool Lexer::consumeEscapeSequence() {
   }
 }
 
+// Consume and validate a Unicode escape sequence.
 bool Lexer::consumeUnicodeEscape() {
   if (consumeIf('{')) {
     std::uint32_t value = 0;
@@ -1415,6 +1459,7 @@ bool Lexer::consumeUnicodeEscape() {
   return true;
 }
 
+// Validate UTF-8 in a source range.
 bool Lexer::validateUTF8(
     const char* begin,
     const char* end) const noexcept {
@@ -1480,6 +1525,7 @@ bool Lexer::validateUTF8(
 }
 
 // Lex an identifier and classify its keyword spelling.
+// Lex an identifier and classify reserved keyword spellings.
 Token Lexer::lexIdentifierOrKeyword() {
   beginToken();
   consumeIdentifier();
@@ -1523,6 +1569,7 @@ Token Lexer::lexIdentifierOrKeyword() {
 }
 
 // Lex an integer or floating-point literal.
+// Lex decimal, binary, octal, hexadecimal, and floating literals.
 Token Lexer::lexNumber() {
   beginToken();
 
@@ -1638,6 +1685,7 @@ Token Lexer::lexNumber() {
 }
 
 // Lex a string literal with escape recovery.
+// Lex a string literal with escape and UTF-8 validation.
 Token Lexer::lexString() {
   beginToken();
 
@@ -1703,6 +1751,7 @@ Token Lexer::lexString() {
 }
 
 // Lex a character literal with boundary checking.
+// Lex a character literal with delimiter-aware recovery.
 Token Lexer::lexCharacter() {
   beginToken();
 
@@ -1767,6 +1816,7 @@ Token Lexer::lexCharacter() {
 }
 
 // Lex a hash-prefixed directive.
+// Lex hash-prefixed directives.
 Token Lexer::lexHashOrDirective() {
   beginToken();
 
@@ -1799,6 +1849,7 @@ Token Lexer::lexHashOrDirective() {
 }
 
 // Lex an at-prefixed directive.
+// Lex at-prefixed directives.
 Token Lexer::lexAtOrDirective() {
   beginToken();
 
@@ -1842,6 +1893,7 @@ Token Lexer::lexAtOrDirective() {
 }
 
 // Distinguish a comment from the slash operator.
+// Distinguish comments from slash-based operators.
 Token Lexer::lexCommentOrSlash() {
   beginToken();
 
@@ -1878,6 +1930,7 @@ Token Lexer::lexCommentOrSlash() {
 }
 
 // Lex punctuation and operators.
+// Lex operators and punctuation using direct character dispatch.
 Token Lexer::lexOperatorOrPunctuation() {
   beginToken();
 
@@ -2074,6 +2127,7 @@ Token Lexer::lexOperatorOrPunctuation() {
 }
 
 // Apply identifier context to the completed token.
+// Apply function-name and calling-name context to identifiers.
 Token Lexer::handleIdentifierContext(Token token) noexcept {
   if (expectingCallingName_ &&
       token.kind == TokenKind::Identifier) {
@@ -2084,6 +2138,7 @@ Token Lexer::handleIdentifierContext(Token token) noexcept {
   return token;
 }
 
+// Commit diagnostics produced during successful lookahead.
 void Lexer::commitLookaheadDiagnostics() {
   if (lookaheadDiagnostics_.empty()) {
     return;
@@ -2096,6 +2151,7 @@ void Lexer::commitLookaheadDiagnostics() {
 }
 
 // Update contextual lexer state after token formation.
+// Update contextual state after forming a token.
 void Lexer::updateContext(
     TokenKind kind,
     std::string_view text) noexcept {
@@ -2149,6 +2205,7 @@ void Lexer::updateContext(
 }
 
 // Save state before speculative lexing.
+// Save lexer state before speculative scanning.
 Lexer::LexState Lexer::saveState() const noexcept {
   return {
       cursor_,
@@ -2161,6 +2218,7 @@ Lexer::LexState Lexer::saveState() const noexcept {
 }
 
 // Restore state after speculative lexing.
+// Restore lexer state after speculative scanning.
 void Lexer::restoreState(
     const LexState& state) noexcept {
   cursor_ = state.cursor;
@@ -2263,6 +2321,7 @@ Token Lexer::lexImpl() {
 }
 
 // Consume the next token.
+// Consume and return the next token.
 Token Lexer::lex() {
   if (hasLookahead_) {
     Token result = lookahead_;
@@ -2284,6 +2343,7 @@ Token Lexer::lex() {
 }
 
 // Speculatively lex the next token without committing state.
+// Return the next token without committing cursor state.
 Token Lexer::peek() {
   if (hasLookahead_) {
     return lookahead_;
@@ -2320,6 +2380,7 @@ Token Lexer::peek() {
 }
 
 // Lex the next identifier as a calling name.
+// Lex the next identifier as an explicit calling name.
 Token Lexer::lexCallingName() {
   Token token = lex();
 
