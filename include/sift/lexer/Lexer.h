@@ -2,13 +2,16 @@
 #define SIFT_LEXER_LEXER_H
 
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 #include <vector>
 
 #include "sift/lexer/Diagnostic.h"
 #include "sift/lexer/LexerCursor.h"
 #include "sift/lexer/LexerOptions.h"
+#include "sift/lexer/SourceLocation.h"
 #include "sift/lexer/Token.h"
+#include "sift/lexer/TokenKind.h"
 
 namespace sift::lexer {
 
