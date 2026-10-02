@@ -33,15 +33,20 @@ bool isDeclarationKeyword(TokenKind kind) noexcept {
 }
 
 bool isControlKeyword(TokenKind kind) noexcept {
-  return kind == TokenKind::KeywordIf ||
-         kind == TokenKind::KeywordWhile ||
-         kind == TokenKind::KeywordRepeat ||
-         kind == TokenKind::KeywordFor ||
-         kind == TokenKind::KeywordReturn ||
-         kind == TokenKind::KeywordDefer ||
-         kind == TokenKind::KeywordSwitch ||
-         kind == TokenKind::KeywordBreak ||
-         kind == TokenKind::KeywordContinue;
+  switch (kind) {
+    case TokenKind::KeywordIf:
+    case TokenKind::KeywordWhile:
+    case TokenKind::KeywordRepeat:
+    case TokenKind::KeywordFor:
+    case TokenKind::KeywordReturn:
+    case TokenKind::KeywordDefer:
+    case TokenKind::KeywordSwitch:
+    case TokenKind::KeywordBreak:
+    case TokenKind::KeywordContinue:
+      return true;
+    default:
+      return false;
+  }
 }
 
 bool isAssignableExpression(const Expression* expression) noexcept {
@@ -67,30 +72,6 @@ bool isUnaryOperator(TokenKind kind) noexcept {
          kind == TokenKind::Plus ||
          kind == TokenKind::KeywordError ||
          kind == TokenKind::KeywordPanic;
-}
-
-bool isEqualityOperator(TokenKind kind) noexcept {
-  return kind == TokenKind::EqualEqual ||
-         kind == TokenKind::BangEqual ||
-         kind == TokenKind::TildeEqual;
-}
-
-bool isComparisonOperator(TokenKind kind) noexcept {
-  return kind == TokenKind::Less ||
-         kind == TokenKind::LessEqual ||
-         kind == TokenKind::Greater ||
-         kind == TokenKind::GreaterEqual;
-}
-
-bool isTermOperator(TokenKind kind) noexcept {
-  return kind == TokenKind::Plus ||
-         kind == TokenKind::Minus;
-}
-
-bool isFactorOperator(TokenKind kind) noexcept {
-  return kind == TokenKind::Star ||
-         kind == TokenKind::Slash ||
-         kind == TokenKind::Percent;
 }
 
 } // namespace
@@ -374,46 +355,74 @@ std::unique_ptr<Statement> Parser::parseStatement() {
 
   switch (current_.kind) {
     case TokenKind::KeywordVar:
-      node->value = std::move(*parseVariable(false));
+      if (auto parsed = parseVariable(false)) {
+        node->value = std::move(*parsed);
+      }
       break;
     case TokenKind::KeywordConst:
-      node->value = std::move(*parseVariable(true));
+      if (auto parsed = parseVariable(true)) {
+        node->value = std::move(*parsed);
+      }
       break;
     case TokenKind::KeywordIf:
-      node->value = std::move(*parseIf());
+      if (auto parsed = parseIf()) {
+        node->value = std::move(*parsed);
+      }
       break;
     case TokenKind::KeywordWhile:
-      node->value = std::move(*parseWhile());
+      if (auto parsed = parseWhile()) {
+        node->value = std::move(*parsed);
+      }
       break;
     case TokenKind::KeywordRepeat:
-      node->value = std::move(*parseRepeat());
+      if (auto parsed = parseRepeat()) {
+        node->value = std::move(*parsed);
+      }
       break;
     case TokenKind::KeywordFor:
-      node->value = std::move(*parseFor());
+      if (auto parsed = parseFor()) {
+        node->value = std::move(*parsed);
+      }
       break;
     case TokenKind::KeywordReturn:
-      node->value = std::move(*parseReturn());
+      if (auto parsed = parseReturn()) {
+        node->value = std::move(*parsed);
+      }
       break;
     case TokenKind::KeywordDefer:
-      node->value = std::move(*parseDefer());
+      if (auto parsed = parseDefer()) {
+        node->value = std::move(*parsed);
+      }
       break;
     case TokenKind::KeywordBreak:
-      node->value = std::move(*parseBreak());
+      if (auto parsed = parseBreak()) {
+        node->value = std::move(*parsed);
+      }
       break;
     case TokenKind::KeywordContinue:
-      node->value = std::move(*parseContinue());
+      if (auto parsed = parseContinue()) {
+        node->value = std::move(*parsed);
+      }
       break;
     case TokenKind::KeywordSwitch:
-      node->value = std::move(*parseSwitch());
+      if (auto parsed = parseSwitch()) {
+        node->value = std::move(*parsed);
+      }
       break;
     case TokenKind::KeywordFunction:
-      node->value = std::move(*parseFunction());
+      if (auto parsed = parseFunction()) {
+        node->value = std::move(*parsed);
+      }
       break;
     case TokenKind::KeywordStruct:
-      node->value = std::move(*parseStruct());
+      if (auto parsed = parseStruct()) {
+        node->value = std::move(*parsed);
+      }
       break;
     default:
-      node->value = std::move(*parseExpressionStatement());
+      if (auto parsed = parseExpressionStatement()) {
+        node->value = std::move(*parsed);
+      }
       break;
   }
 
@@ -468,11 +477,12 @@ std::unique_ptr<IfStatement> Parser::parseIf() {
       node->elseBlock = std::make_unique<Block>();
       node->elseBlock->location = lexer_.locationAt(current_.start);
 
-      auto nested = parseIf();
-      auto statement = std::make_unique<Statement>();
-      statement->value = std::move(*nested);
-      node->elseBlock->statements.push_back(
-          std::move(statement));
+      if (auto nested = parseIf()) {
+        auto statement = std::make_unique<Statement>();
+        statement->value = std::move(*nested);
+        node->elseBlock->statements.push_back(
+            std::move(statement));
+      }
     } else {
       node->elseBlock = parseBlock();
     }
@@ -652,7 +662,7 @@ std::unique_ptr<SwitchStatement> Parser::parseSwitch() {
 
   expect(TokenKind::RightBrace, "expected '}' after switch statement");
 
-  if (!hasCase && !hasDefault) {
+  if (!hasCase && !sawDefault) {
     error(start, "switch statement requires at least one case");
   }
 
