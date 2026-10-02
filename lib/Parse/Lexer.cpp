@@ -10,13 +10,13 @@
 // techniques are intentionally suitable for a high-level language compiler
 // that may ultimately target low-level and bare-metal backends.
 
-#include "sift/lexer/Lexer.h"
-#include "sift/lexer/Diagnostic.h"
-#include "sift/lexer/LexerCursor.h"
-#include "sift/lexer/LexerOptions.h"
-#include "sift/lexer/SourceLocation.h"
-#include "sift/lexer/Token.h"
-#include "sift/lexer/TokenKind.h"
+#include "sift/Parse/Lexer.h"
+#include "sift/Parse/Diagnostic.h"
+#include "sift/Parse/LexerCursor.h"
+#include "sift/Parse/LexerOptions.h"
+#include "sift/Parse/SourceLocation.h"
+#include "sift/Parse/Token.h"
+#include "sift/Parse/TokenKind.h"
 
 #include <array>
 #include <cstdint>
