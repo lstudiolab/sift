@@ -1098,7 +1098,7 @@ void Lexer::reset() noexcept {
 
   lookahead_ = {};
   lookaheadState_ = saveState();
-  lookaheadDiagnostics_.clear();
+  lookaheadDiagnosticCount_ = 0;
   hasLookahead_ = false;
 
   expectingCallingName_ = false;
@@ -1140,57 +1140,6 @@ bool Lexer::hasErrors() const noexcept {
   }
 
   return false;
-}
-
-// Read ahead without advancing the cursor.
-// Read ahead without advancing the lexer cursor.
-char Lexer::peekChar(std::size_t distance) const noexcept {
-  const std::size_t remaining =
-      static_cast<std::size_t>(cursor_.end - cursor_.current);
-
-  if (distance >= remaining) {
-    return '\0';
-  }
-
-  return cursor_.current[distance];
-}
-
-// Consume one character and update its source location.
-// Consume one byte and update its source position.
-char Lexer::consumeChar() noexcept {
-  if (atEnd()) {
-    return '\0';
-  }
-
-  const char value = *cursor_.current;
-
-  if (value == '\r') {
-    ++cursor_.current;
-    ++cursor_.offset;
-
-    if (!atEnd() &&
-        *cursor_.current == '\n') {
-      ++cursor_.current;
-      ++cursor_.offset;
-    }
-
-    ++cursor_.line;
-    cursor_.column = 1;
-
-    return '\n';
-  }
-
-  ++cursor_.current;
-  ++cursor_.offset;
-
-  if (value == '\n') {
-    ++cursor_.line;
-    cursor_.column = 1;
-  } else {
-    ++cursor_.column;
-  }
-
-  return value;
 }
 
 // Consume one character only when it matches the expected value.
@@ -2239,13 +2188,16 @@ Token Lexer::lexIdentifierOrKeyword() {
       static_cast<std::size_t>(
           cursor_.current - tokenStart_.current));
 
-  const bool containsNonASCII =
-      std::any_of(
-          tokenStart_.current,
-          cursor_.current,
-          [](char value) noexcept {
-            return static_cast<unsigned char>(value) >= 0x80u;
-          });
+  bool containsNonASCII = false;
+
+  if (options_.allowUnicodeIdentifiers) {
+    containsNonASCII = std::any_of(
+        tokenStart_.current,
+        cursor_.current,
+        [](char value) noexcept {
+          return static_cast<unsigned char>(value) >= 0x80u;
+        });
+  }
 
   if (containsNonASCII &&
       !validateUTF8(
@@ -2487,17 +2439,21 @@ Token Lexer::lexString() {
 
     const char* runStart = cursor_.current;
     const char* runEnd = runStart;
+    bool containsNonASCII = false;
 
     while (runEnd < cursor_.end &&
            *runEnd != '"' &&
            *runEnd != '\\' &&
            *runEnd != '\n' &&
            *runEnd != '\r') {
+      if (static_cast<unsigned char>(*runEnd) >= 0x80u) {
+        containsNonASCII = true;
+      }
       ++runEnd;
     }
 
     if (runEnd != runStart) {
-      if (!validateUTF8(runStart, runEnd)) {
+      if (containsNonASCII && !validateUTF8(runStart, runEnd)) {
         addDiagnostic(
             DiagnosticSeverity::Error,
             {
@@ -2972,15 +2928,8 @@ Token Lexer::handleIdentifierContext(Token token) noexcept {
 }
 
 // Commit diagnostics produced during successful lookahead.
-void Lexer::commitLookaheadDiagnostics() {
-  if (lookaheadDiagnostics_.empty()) {
-    return;
-  }
-
-  diagnostics_.insert(
-      diagnostics_.end(),
-      lookaheadDiagnostics_.begin(),
-      lookaheadDiagnostics_.end());
+void Lexer::commitLookaheadDiagnostics() noexcept {
+  lookaheadDiagnosticCount_ = 0;
 }
 
 // Update contextual lexer state after token formation.
@@ -3162,7 +3111,7 @@ Token Lexer::lex() {
     hasLookahead_ = false;
     lookahead_ = {};
     lookaheadState_ = saveState();
-    lookaheadDiagnostics_.clear();
+    lookaheadDiagnosticCount_ = 0;
 
     return result;
   }
@@ -3189,18 +3138,7 @@ Token Lexer::peek() {
   const LexState advancedState =
       saveState();
 
-  if (diagnostics_.size() > savedDiagnosticCount) {
-    lookaheadDiagnostics_.assign(
-        diagnostics_.begin() +
-            static_cast<std::ptrdiff_t>(
-                savedDiagnosticCount),
-        diagnostics_.end());
-
-    diagnostics_.resize(
-        savedDiagnosticCount);
-  } else {
-    lookaheadDiagnostics_.clear();
-  }
+  lookaheadDiagnosticCount_ = diagnostics_.size() - savedDiagnosticCount;
 
   restoreState(savedState);
 
