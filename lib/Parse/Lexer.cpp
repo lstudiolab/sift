@@ -2993,16 +2993,11 @@ Token Lexer::peek() {
   const LexState savedState =
       saveState();
 
-  const std::size_t savedDiagnosticCount =
-      diagnostics_.size();
-
   Token speculativeToken =
       lexImpl();
 
   const LexState advancedState =
       saveState();
-
-  (void)savedDiagnosticCount;
 
   restoreState(savedState);
 
