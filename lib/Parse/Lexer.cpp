@@ -18,6 +18,7 @@
 #include "sift/Parse/Token.h"
 #include "sift/Parse/TokenKind.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -2220,8 +2221,7 @@ bool Lexer::validateUTF8(
     }
 
     if (value < minimum ||
-        value > 0x10ffffu ||
-        (value >= 0xd800u && value <= 0xdfffu)) {
+        !isValidUnicodeScalar(value)) {
       return false;
     }
   }
@@ -2240,7 +2240,16 @@ Token Lexer::lexIdentifierOrKeyword() {
       static_cast<std::size_t>(
           cursor_.current - tokenStart_.current));
 
-  if (!validateUTF8(
+  const bool containsNonASCII =
+      std::any_of(
+          tokenStart_.current,
+          cursor_.current,
+          [](char value) noexcept {
+            return static_cast<unsigned char>(value) >= 0x80u;
+          });
+
+  if (containsNonASCII &&
+      !validateUTF8(
           tokenStart_.current,
           cursor_.current)) {
     addDiagnostic(
@@ -2444,6 +2453,28 @@ Token Lexer::lexString() {
       return finish(TokenKind::Unknown);
     }
 
+    const char* runStart = cursor_.current;
+    const char* runEnd = runStart;
+
+    while (runEnd < cursor_.end &&
+           *runEnd != '"' &&
+           *runEnd != '\\' &&
+           *runEnd != '\n' &&
+           *runEnd != '\r') {
+      ++runEnd;
+    }
+
+    if (runEnd != runStart) {
+      const std::size_t consumed =
+          static_cast<std::size_t>(
+              runEnd - runStart);
+
+      cursor_.current = runEnd;
+      cursor_.offset += consumed;
+      cursor_.column += consumed;
+      continue;
+    }
+
     consumeChar();
   }
 
@@ -2554,7 +2585,7 @@ Token Lexer::lexHashOrDirective() {
 }
 
 // Lex an at-prefixed directive.
-// Lex at-prefixed directives.
+// Lex @ directives through the shared keyword table.
 Token Lexer::lexAtOrDirective() {
   beginToken();
 
@@ -2571,27 +2602,11 @@ Token Lexer::lexAtOrDirective() {
       static_cast<std::size_t>(
           cursor_.current - tokenStart_.current));
 
-  if (spelling == "@file") {
-    return finish(TokenKind::KeywordFile);
-  }
+  const TokenKind keyword =
+      classifyKeyword(spelling);
 
-  if (spelling == "@fileID") {
-    return finish(TokenKind::KeywordFileID);
-  }
-
-  if (spelling == "@api") {
-    return finish(TokenKind::KeywordAPI);
-  }
-
-  if (spelling == "@repo") {
-    return finish(TokenKind::KeywordRepo);
-  }
-
-  if (spelling == "@webLink") {    return finish(TokenKind::KeywordWebLink);
-  }
-
-  if (spelling == "@database") {
-    return finish(TokenKind::KeywordDatabase);
+  if (keyword != TokenKind::Identifier) {
+    return finish(keyword);
   }
 
   return finish(TokenKind::At);
@@ -2979,8 +2994,7 @@ Token Lexer::lexImpl() {
       return token;
     }
 
-    if (detail::isPotentialIdentifier(current) &&
-        isIdentifierStart(current)) {
+    if (isIdentifierStart(current)) {
       Token token = lexIdentifierOrKeyword();
       updateContext(token.kind, token.text);
       return token;
@@ -2989,7 +3003,7 @@ Token Lexer::lexImpl() {
     if (detail::isAsciiDigit(current) ||
         (current == '.' &&
          options_.allowLeadingDotFloat &&
-         isDecimalDigit(peekChar(1)))) {
+         detail::isAsciiDigit(peekChar(1)))) {
       Token token = lexNumber();
       updateContext(token.kind, token.text);
       return token;
