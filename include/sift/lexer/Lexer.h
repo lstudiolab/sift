@@ -54,6 +54,18 @@ private:
   bool sawFunctionName_ = false;
   bool lastWasDot_ = false;
 
+  struct LexState {
+    LexerCursor cursor;
+    LexerCursor tokenStart;
+    bool expectingCallingName = false;
+    bool afterFunctionKeyword = false;
+    bool sawFunctionName = false;
+    bool lastWasDot = false;
+  };
+
+  LexState saveState() const noexcept;
+  void restoreState(const LexState& state) noexcept;
+
   std::vector<Diagnostic> diagnostics_;
 
   char peekChar(std::size_t distance = 0) const noexcept;
