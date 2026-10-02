@@ -154,8 +154,7 @@ constexpr bool isContinuationByte(unsigned char value) noexcept {
 }
 
 constexpr bool isAsciiLetter(char value) noexcept {
-  return (value >= 'a' && value <= 'z') ||
-         (value >= 'A' && value <= 'Z');
+  return hasCharacterClass(value, 1u);
 }
 
 constexpr bool isAsciiDigitValue(char value) noexcept {
@@ -164,6 +163,29 @@ constexpr bool isAsciiDigitValue(char value) noexcept {
 
 
 namespace detail {
+
+constexpr std::array<unsigned char, 256> CharacterClassTable = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    16, 32, 0, 0, 12, 32, 32, 0, 64, 64, 32, 32, 64, 32, 64, 32,
+    10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 64, 64, 32, 32, 32, 64,
+    0, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
+    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 64, 0, 64, 0, 12,
+    0, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
+    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 64, 32, 64, 32, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+};
+
+constexpr bool hasCharacterClass(char value, unsigned char characterClass) noexcept {
+  return (CharacterClassTable[static_cast<unsigned char>(value)] & characterClass) != 0;
+}
 
 constexpr unsigned char byteOf(char value) noexcept {
   return static_cast<unsigned char>(value);
@@ -175,12 +197,11 @@ constexpr bool isAsciiLetter(char value) noexcept {
 }
 
 constexpr bool isAsciiDigit(char value) noexcept {
-  return value >= '0' && value <= '9';
+  return hasCharacterClass(value, 2u);
 }
 
 constexpr bool isAsciiIdentifierStart(char value) noexcept {
-  return isAsciiLetter(value) ||
-         value == '_';
+  return hasCharacterClass(value, 4u);
 }
 
 // Check that enough source bytes remain before reading ahead.
@@ -223,41 +244,18 @@ inline bool isPotentialIdentifier(
 
 // Check for horizontal whitespace handled by the fast path.
 inline bool isHorizontalWhitespace(char value) noexcept {
-  return value == ' ' ||
-         value == '\t' ||
-         value == '\v' ||
-         value == '\f';
+  return hasCharacterClass(value, 16u) && value != '\r' && value != '\n';
 }
 
 
 // Check whether a byte can begin an operator.
 inline bool isOperatorLeadByte(char value) noexcept {
-  return value == '=' ||
-         value == '!' ||
-         value == '+' ||
-         value == '-' ||
-         value == '*' ||
-         value == '%' ||
-         value == '<' ||
-         value == '>' ||
-         value == '&' ||
-         value == '|' ||
-         value == '~';
+  return hasCharacterClass(value, 32u);
 }
 
 // Check whether a byte can begin punctuation.
 inline bool isPunctuationLeadByte(char value) noexcept {
-  return value == '(' ||
-         value == ')' ||
-         value == '{' ||
-         value == '}' ||
-         value == '[' ||
-         value == ']' ||
-         value == ',' ||
-         value == '.' ||
-         value == ':' ||
-         value == ';' ||
-         value == '?';
+  return hasCharacterClass(value, 64u);
 }
 
 // Recognize a string literal delimiter.
@@ -292,11 +290,9 @@ inline const char* scanAsciiIdentifier(
       break;
     }
 
-    if (!isAsciiIdentifierStart(
-            static_cast<char>(value)) &&
-        static_cast<char>(value) != '$' &&
-        !isAsciiDigit(
-            static_cast<char>(value))) {
+    if (!hasCharacterClass(
+            static_cast<char>(value),
+            8u)) {
       break;
     }
 
