@@ -871,19 +871,10 @@ std::unique_ptr<Expression> Parser::parseBinaryExpression(int minimumPrecedence)
     const TokenKind operatorKind = current_.kind;
     advance();
 
-    auto right = parseUnary();
+    auto right = parseBinaryExpression(precedence + 1);
     if (!right) {
       error(current_, "expected expression after binary operator");
       return left;
-    }
-
-    const int nextPrecedence = binaryPrecedence(current_.kind);
-    if (nextPrecedence > precedence) {
-      right = parseBinaryExpression(precedence + 1);
-      if (!right) {
-        error(current_, "expected right-hand expression");
-        return left;
-      }
     }
 
     auto node = std::make_unique<Expression>();
