@@ -649,7 +649,7 @@ inline const char* recoveryNumber(
   while (current < end) {
     const char value = *current;
 
-    if (isDecimalDigit(value)) {
+    if (isAsciiDigitValue(value)) {
       separator = false;
       ++current;
       continue;
@@ -833,7 +833,7 @@ inline RecoveryMode chooseRecoveryMode(
     return RecoveryMode::Directive;
   }
 
-  if (isDecimalDigit(value)) {
+  if (isAsciiDigitValue(value)) {
     return RecoveryMode::Number;
   }
 
