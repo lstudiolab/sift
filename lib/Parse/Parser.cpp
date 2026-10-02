@@ -109,12 +109,7 @@ const std::vector<Diagnostic>& Parser::diagnostics() const noexcept {
 }
 
 bool Parser::hasErrors() const noexcept {
-  for (const Diagnostic& diagnostic : diagnostics_) {
-    if (diagnostic.severity == DiagnosticSeverity::Error) {
-      return true;
-    }
-  }
-  return lexer_.hasErrors();
+  return hasParserErrors_ || lexer_.hasErrors();
 }
 
 void Parser::advance() {
@@ -173,6 +168,8 @@ bool Parser::expect(TokenKind kind, std::string_view message) {
 }
 
 void Parser::error(const Token& token, std::string_view message) {
+  hasParserErrors_ = true;
+
   if (diagnostics_.size() >= maxDiagnostics_) {
     if (!diagnosticsTruncated_) {
       diagnosticsTruncated_ = true;
@@ -710,7 +707,7 @@ std::unique_ptr<Expression> Parser::parseExpression() {
 
 // Assignment is right-associative and is the only expression level that recurses.
 std::unique_ptr<Expression> Parser::parseAssignment() {
-  auto left = parseLogicalOr();
+  auto left = parseBinaryExpression(1);
 
   if (!left || !isAssignmentOperator(current_.kind)) {
     return left;
@@ -742,149 +739,54 @@ std::unique_ptr<Expression> Parser::parseAssignment() {
   return node;
 }
 
-std::unique_ptr<Expression> Parser::parseLogicalOr() {
-  auto left = parseLogicalAnd();
-
-  while (match(TokenKind::OrOr)) {
-    const Token operatorToken = previous_;
-    auto right = parseLogicalAnd();
-
-    if (!right) {
-      error(current_, "expected expression after '||'");
-      break;
-    }
-
-    auto node = std::make_unique<Expression>();
-    node->location = lexer_.locationAt(operatorToken.start);
-
-    BinaryExpression binary;
-    binary.op = operatorText(operatorToken.kind);
-    binary.left = std::move(left);
-    binary.right = std::move(right);
-    node->value = std::move(binary);
-    left = std::move(node);
+int Parser::binaryPrecedence(TokenKind kind) noexcept {
+  switch (kind) {
+    case TokenKind::OrOr: return 1;
+    case TokenKind::AndAnd: return 2;
+    case TokenKind::EqualEqual:
+    case TokenKind::BangEqual:
+    case TokenKind::TildeEqual: return 3;
+    case TokenKind::Less:
+    case TokenKind::LessEqual:
+    case TokenKind::Greater:
+    case TokenKind::GreaterEqual: return 4;
+    case TokenKind::Plus:
+    case TokenKind::Minus: return 5;
+    case TokenKind::Star:
+    case TokenKind::Slash:
+    case TokenKind::Percent: return 6;
+    default: return 0;
   }
-
-  return left;
 }
 
-std::unique_ptr<Expression> Parser::parseLogicalAnd() {
-  auto left = parseEquality();
-
-  while (match(TokenKind::AndAnd)) {
-    const Token operatorToken = previous_;
-    auto right = parseEquality();
-
-    if (!right) {
-      error(current_, "expected expression after '&&'");
-      break;
-    }
-
-    auto node = std::make_unique<Expression>();
-    node->location = lexer_.locationAt(operatorToken.start);
-
-    BinaryExpression binary;
-    binary.op = operatorText(operatorToken.kind);
-    binary.left = std::move(left);
-    binary.right = std::move(right);
-    node->value = std::move(binary);
-    left = std::move(node);
-  }
-
-  return left;
-}
-
-std::unique_ptr<Expression> Parser::parseEquality() {
-  auto left = parseComparison();
-
-  while (isEqualityOperator(current_.kind)) {
-    const Token operatorToken = current_;
-    advance();
-
-    auto right = parseComparison();
-    if (!right) {
-      error(current_, "expected expression after equality operator");
-      break;
-    }
-
-    auto node = std::make_unique<Expression>();
-    node->location = lexer_.locationAt(operatorToken.start);
-
-    BinaryExpression binary;
-    binary.op = operatorText(operatorToken.kind);
-    binary.left = std::move(left);
-    binary.right = std::move(right);
-    node->value = std::move(binary);
-    left = std::move(node);
-  }
-
-  return left;
-}
-
-std::unique_ptr<Expression> Parser::parseComparison() {
-  auto left = parseTerm();
-
-  while (isComparisonOperator(current_.kind)) {
-    const Token operatorToken = current_;
-    advance();
-
-    auto right = parseTerm();
-    if (!right) {
-      error(current_, "expected expression after comparison operator");
-      break;
-    }
-
-    auto node = std::make_unique<Expression>();
-    node->location = lexer_.locationAt(operatorToken.start);
-
-    BinaryExpression binary;
-    binary.op = operatorText(operatorToken.kind);
-    binary.left = std::move(left);
-    binary.right = std::move(right);
-    node->value = std::move(binary);
-    left = std::move(node);
-  }
-
-  return left;
-}
-
-std::unique_ptr<Expression> Parser::parseTerm() {
-  auto left = parseFactor();
-
-  while (isTermOperator(current_.kind)) {
-    const Token operatorToken = current_;
-    advance();
-
-    auto right = parseFactor();
-    if (!right) {
-      error(current_, "expected expression after arithmetic operator");
-      break;
-    }
-
-    auto node = std::make_unique<Expression>();
-    node->location = lexer_.locationAt(operatorToken.start);
-
-    BinaryExpression binary;
-    binary.op = operatorText(operatorToken.kind);
-    binary.left = std::move(left);
-    binary.right = std::move(right);
-    node->value = std::move(binary);
-    left = std::move(node);
-  }
-
-  return left;
-}
-
-std::unique_ptr<Expression> Parser::parseFactor() {
+std::unique_ptr<Expression> Parser::parseBinaryExpression(int minimumPrecedence) {
   auto left = parseUnary();
+  if (!left) {
+    return nullptr;
+  }
 
-  while (isFactorOperator(current_.kind)) {
+  for (;;) {
+    const int precedence = binaryPrecedence(current_.kind);
+    if (precedence < minimumPrecedence) {
+      break;
+    }
+
     const Token operatorToken = current_;
+    const TokenKind operatorKind = current_.kind;
     advance();
 
     auto right = parseUnary();
     if (!right) {
-      error(current_, "expected expression after multiplicative operator");
+      error(current_, "expected expression after binary operator");
+      return left;
+    }
+
+    while (binaryPrecedence(current_.kind) > precedence) {
+      const int nextPrecedence = binaryPrecedence(current_.kind);
+      right = parseBinaryExpression(nextPrecedence);
+      if (!right) {
+        return left;
+      }
       break;
     }
 
@@ -892,7 +794,7 @@ std::unique_ptr<Expression> Parser::parseFactor() {
     node->location = lexer_.locationAt(operatorToken.start);
 
     BinaryExpression binary;
-    binary.op = operatorText(operatorToken.kind);
+    binary.op = operatorText(operatorKind);
     binary.left = std::move(left);
     binary.right = std::move(right);
     node->value = std::move(binary);
@@ -1091,7 +993,7 @@ bool Parser::isAssignmentOperator(TokenKind kind) const noexcept {
          kind == TokenKind::PercentEqual;
 }
 
-std::string Parser::operatorText(TokenKind kind) {
+std::string_view Parser::operatorText(TokenKind kind) noexcept {
   switch (kind) {
     case TokenKind::Equal: return "=";
     case TokenKind::EqualEqual: return "==";
