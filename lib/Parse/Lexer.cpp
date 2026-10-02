@@ -12,6 +12,7 @@
 
 #include "sift/Parse/Lexer.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -3001,7 +3002,7 @@ Token Lexer::peek() {
   const LexState advancedState =
       saveState();
 
-  lookaheadDiagnosticCount_ = diagnostics_.size() - savedDiagnosticCount;
+  (void)savedDiagnosticCount;
 
   restoreState(savedState);
 
