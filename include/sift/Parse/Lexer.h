@@ -188,6 +188,10 @@ private:
   std::vector<Diagnostic> diagnostics_;
   std::vector<std::size_t> lineStarts_;
 
+  mutable std::size_t cachedLocationOffset_ = 0;
+  mutable std::size_t cachedLineIndex_ = 0;
+  mutable bool hasCachedLocation_ = false;
+
   inline char peekChar(std::size_t distance = 0) const noexcept {
     const char* current = cursor_.current;
     const char* end = cursor_.end;
