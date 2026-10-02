@@ -163,7 +163,6 @@ private:
   LexerCursor tokenStart_{};
 
   Token lookahead_{};
-  std::size_t lookaheadDiagnosticCount_ = 0;
 
   bool hasLookahead_ = false;
   bool expectingCallingName_ = false;
@@ -187,6 +186,7 @@ private:
   void restoreState(const LexState& state) noexcept;
 
   std::vector<Diagnostic> diagnostics_;
+  std::vector<std::size_t> lineStarts_;
 
   inline char peekChar(std::size_t distance = 0) const noexcept {
     const char* current = cursor_.current;
@@ -299,7 +299,6 @@ private:
       TokenKind kind,
       std::string_view text) noexcept;
 
-  void commitLookaheadDiagnostics() noexcept;
 };
 
 } // namespace sift::lexer
