@@ -955,9 +955,7 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
 
 std::string Parser::parseTypeName() {
   if (isTypeToken(current_.kind)) {
-    const Token first = current_;
-    std::string type = tokenText(first);
-    type.reserve(static_cast<std::size_t>(first.length) + 16);
+    std::string type = tokenText(current_);
     advance();
 
     while (match(TokenKind::Dot)) {
