@@ -6,14 +6,116 @@
 #include <string_view>
 #include <vector>
 
-#include "sift/Parse/Diagnostic.h"
-#include "sift/Parse/LexerCursor.h"
-#include "sift/Parse/LexerOptions.h"
-#include "sift/Parse/SourceLocation.h"
-#include "sift/Parse/Token.h"
-#include "sift/Parse/TokenKind.h"
 
 namespace sift::lexer {
+
+enum class DiagnosticSeverity : std::uint8_t {
+  Note,
+  Warning,
+  Error
+};
+
+struct SourceLocation {
+  std::size_t offset = 0;
+  std::size_t line = 1;
+  std::size_t column = 1;
+};
+
+struct LexerCursor {
+  const char* current = nullptr;
+  const char* end = nullptr;
+  std::size_t offset = 0;
+  std::size_t line = 1;
+  std::size_t column = 1;
+};
+
+struct LexerOptions {
+  bool retainComments = true;
+  bool emitNewlines = false;
+  bool allowUnicodeIdentifiers = true;
+  bool allowLeadingDotFloat = true;
+  bool allowBinaryInteger = true;
+  bool allowOctalInteger = true;
+  bool allowHexInteger = true;
+};
+
+struct Diagnostic {
+  DiagnosticSeverity severity = DiagnosticSeverity::Error;
+  SourceLocation location{};
+  std::string_view message{};
+};
+
+enum class TokenKind : std::uint16_t {
+  EndOfFile,
+  Unknown,
+  Identifier,
+  CallingName,
+  IntegerLiteral,
+  FloatingLiteral,
+  StringLiteral,
+  CharacterLiteral,
+
+  KeywordVar, KeywordConst, KeywordFunction, KeywordInit, KeywordDeinit,
+  KeywordType, KeywordTypealias, KeywordStruct, KeywordClass, KeywordEnum,
+  KeywordProtocol, KeywordExtension, KeywordIf, KeywordElse, KeywordEnd,
+  KeywordGuard, KeywordSwitch, KeywordCase, KeywordDefat, KeywordWhile,
+  KeywordRepeat, KeywordFor, KeywordLoop, KeywordIn, KeywordDo, KeywordBreak,
+  KeywordContinue, KeywordReturn, KeywordDefer, KeywordCall, KeywordAsync,
+  KeywordAwait, KeywordWait, KeywordThrows, KeywordThrow, KeywordTry,
+  KeywordCatch, KeywordRethrow, KeywordTask, KeywordTrue, KeywordFalse,
+  KeywordSelf, KeywordSome, KeywordAny, KeywordInt, KeywordNum, KeywordString,
+  KeywordBool, KeywordBytes, KeywordPublic, KeywordPrivate, KeywordProtect,
+  KeywordStatic, KeywordFinal, KeywordOpen, KeywordOverRide, KeywordRequired,
+  KeywordImport, KeywordExport, KeywordModule, KeywordPackage, KeywordFile,
+  KeywordFileID, KeywordAPI, KeywordRepo, KeywordWebLink, KeywordDatabase,
+  KeywordMessage, KeywordError, KeywordMath, KeywordAbs, KeywordMin,
+  KeywordMax, KeywordDecrease, KeywordIncrease, KeywordSection, KeywordData,
+  KeywordGetData, KeywordCreateData, KeywordControl, KeywordConnect,
+  KeywordBackup, KeywordBinary, KeywordKernel, KeywordOS, KeywordOutput,
+  KeywordDelete, KeywordDestroy, KeywordPanic,
+
+  LeftParen, RightParen, LeftBrace, RightBrace, LeftBracket, RightBracket,
+  Comma, Dot, Colon, Semicolon, Question, At, Hash,
+
+  Equal, EqualEqual, Bang, BangEqual, Plus, PlusEqual, Minus, MinusEqual,
+  Star, StarEqual, Slash, SlashEqual, Percent, PercentEqual, Less, LessEqual,
+  Greater, GreaterEqual, AndAnd, OrOr, Arrow, Tilde, TildeEqual,
+  PlusPlus, MinusMinus,
+
+  Comment,
+  Newline
+};
+
+struct Token {
+  TokenKind kind = TokenKind::Unknown;
+  std::string_view text{};
+  SourceLocation location{};
+  std::size_t endOffset = 0;
+
+  constexpr bool is(TokenKind expected) const noexcept {
+    return kind == expected;
+  }
+
+  constexpr bool isIdentifier() const noexcept {
+    return kind == TokenKind::Identifier ||
+           kind == TokenKind::CallingName;
+  }
+
+  constexpr bool isLiteral() const noexcept {
+    switch (kind) {
+      case TokenKind::IntegerLiteral:
+      case TokenKind::FloatingLiteral:
+      case TokenKind::StringLiteral:
+      case TokenKind::CharacterLiteral:
+      case TokenKind::KeywordTrue:
+      case TokenKind::KeywordFalse:
+        return true;
+      default:
+        return false;
+    }
+  }
+};
+
 
 class Lexer final {
 public:
