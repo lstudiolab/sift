@@ -27,15 +27,138 @@ namespace sift::lexer {
 
 namespace {
 
-// Hash a keyword spelling for stable external queries.
+struct KeywordEntry {
+  std::string_view spelling;
+  TokenKind kind;
+  std::uint64_t hash;
+};
+
+// Hash a keyword spelling for fast deterministic lookup.
 constexpr std::uint64_t fnv1a(std::string_view text) noexcept {
   std::uint64_t value = 14695981039346656037ull;
+
   for (unsigned char character : text) {
     value ^= static_cast<std::uint64_t>(character);
     value *= 1099511628211ull;
   }
+
   return value;
 }
+
+constexpr std::array<KeywordEntry, 90> Keywords = {{
+  {"var", TokenKind::KeywordVar, fnv1a("var")},
+  {"const", TokenKind::KeywordConst, fnv1a("const")},
+  {"function", TokenKind::KeywordFunction, fnv1a("function")},
+  {"init", TokenKind::KeywordInit, fnv1a("init")},
+  {"deinit", TokenKind::KeywordDeinit, fnv1a("deinit")},
+  {"type", TokenKind::KeywordType, fnv1a("type")},
+  {"typealias", TokenKind::KeywordTypealias, fnv1a("typealias")},
+  {"struct", TokenKind::KeywordStruct, fnv1a("struct")},
+  {"class", TokenKind::KeywordClass, fnv1a("class")},
+  {"enum", TokenKind::KeywordEnum, fnv1a("enum")},
+  {"protocol", TokenKind::KeywordProtocol, fnv1a("protocol")},
+  {"extension", TokenKind::KeywordExtension, fnv1a("extension")},
+  {"if", TokenKind::KeywordIf, fnv1a("if")},
+  {"else", TokenKind::KeywordElse, fnv1a("else")},
+  {"end", TokenKind::KeywordEnd, fnv1a("end")},
+  {"guard", TokenKind::KeywordGuard, fnv1a("guard")},
+  {"switch", TokenKind::KeywordSwitch, fnv1a("switch")},
+  {"case", TokenKind::KeywordCase, fnv1a("case")},
+  {"defat", TokenKind::KeywordDefat, fnv1a("defat")},
+  {"while", TokenKind::KeywordWhile, fnv1a("while")},
+  {"repeat", TokenKind::KeywordRepeat, fnv1a("repeat")},
+  {"for", TokenKind::KeywordFor, fnv1a("for")},
+  {"loop", TokenKind::KeywordLoop, fnv1a("loop")},
+  {"in", TokenKind::KeywordIn, fnv1a("in")},
+  {"do", TokenKind::KeywordDo, fnv1a("do")},
+  {"break", TokenKind::KeywordBreak, fnv1a("break")},
+  {"continue", TokenKind::KeywordContinue, fnv1a("continue")},
+  {"return", TokenKind::KeywordReturn, fnv1a("return")},
+  {"defer", TokenKind::KeywordDefer, fnv1a("defer")},
+  {"call", TokenKind::KeywordCall, fnv1a("call")},
+  {"async", TokenKind::KeywordAsync, fnv1a("async")},
+  {"await", TokenKind::KeywordAwait, fnv1a("await")},
+  {"wait", TokenKind::KeywordWait, fnv1a("wait")},
+  {"throws", TokenKind::KeywordThrows, fnv1a("throws")},
+  {"throw", TokenKind::KeywordThrow, fnv1a("throw")},
+  {"try", TokenKind::KeywordTry, fnv1a("try")},
+  {"catch", TokenKind::KeywordCatch, fnv1a("catch")},
+  {"rethrow", TokenKind::KeywordRethrow, fnv1a("rethrow")},
+  {"task", TokenKind::KeywordTask, fnv1a("task")},
+  {"true", TokenKind::KeywordTrue, fnv1a("true")},
+  {"false", TokenKind::KeywordFalse, fnv1a("false")},
+  {"self", TokenKind::KeywordSelf, fnv1a("self")},
+  {"some", TokenKind::KeywordSome, fnv1a("some")},
+  {"any", TokenKind::KeywordAny, fnv1a("any")},
+  {"int", TokenKind::KeywordInt, fnv1a("int")},
+  {"num", TokenKind::KeywordNum, fnv1a("num")},
+  {"string", TokenKind::KeywordString, fnv1a("string")},
+  {"bool", TokenKind::KeywordBool, fnv1a("bool")},
+  {"bytes", TokenKind::KeywordBytes, fnv1a("bytes")},
+  {"public", TokenKind::KeywordPublic, fnv1a("public")},
+  {"private", TokenKind::KeywordPrivate, fnv1a("private")},
+  {"protect", TokenKind::KeywordProtect, fnv1a("protect")},
+  {"static", TokenKind::KeywordStatic, fnv1a("static")},
+  {"final", TokenKind::KeywordFinal, fnv1a("final")},
+  {"open", TokenKind::KeywordOpen, fnv1a("open")},
+  {"overRide", TokenKind::KeywordOverRide, fnv1a("overRide")},
+  {"required", TokenKind::KeywordRequired, fnv1a("required")},
+  {"import", TokenKind::KeywordImport, fnv1a("import")},
+  {"export", TokenKind::KeywordExport, fnv1a("export")},
+  {"module", TokenKind::KeywordModule, fnv1a("module")},
+  {"package", TokenKind::KeywordPackage, fnv1a("package")},
+  {"file", TokenKind::KeywordFile, fnv1a("file")},
+  {"@file", TokenKind::KeywordFile, fnv1a("@file")},
+  {"@fileID", TokenKind::KeywordFileID, fnv1a("@fileID")},
+  {"@api", TokenKind::KeywordAPI, fnv1a("@api")},
+  {"@repo", TokenKind::KeywordRepo, fnv1a("@repo")},
+  {"@webLink", TokenKind::KeywordWebLink, fnv1a("@webLink")},
+  {"@database", TokenKind::KeywordDatabase, fnv1a("@database")},
+  {"message", TokenKind::KeywordMessage, fnv1a("message")},
+  {"error", TokenKind::KeywordError, fnv1a("error")},
+  {"math", TokenKind::KeywordMath, fnv1a("math")},
+  {"abs", TokenKind::KeywordAbs, fnv1a("abs")},
+  {"min", TokenKind::KeywordMin, fnv1a("min")},
+  {"max", TokenKind::KeywordMax, fnv1a("max")},
+  {"decrease", TokenKind::KeywordDecrease, fnv1a("decrease")},
+  {"increase", TokenKind::KeywordIncrease, fnv1a("increase")},
+  {"section", TokenKind::KeywordSection, fnv1a("section")},
+  {"data", TokenKind::KeywordData, fnv1a("data")},
+  {"getData", TokenKind::KeywordGetData, fnv1a("getData")},
+  {"createData", TokenKind::KeywordCreateData, fnv1a("createData")},
+  {"control", TokenKind::KeywordControl, fnv1a("control")},
+  {"connect", TokenKind::KeywordConnect, fnv1a("connect")},
+  {"backup", TokenKind::KeywordBackup, fnv1a("backup")},
+  {"binary", TokenKind::KeywordBinary, fnv1a("binary")},
+  {"kernel", TokenKind::KeywordKernel, fnv1a("kernel")},
+  {"os", TokenKind::KeywordOS, fnv1a("os")},
+  {"output", TokenKind::KeywordOutput, fnv1a("output")},
+  {"delete", TokenKind::KeywordDelete, fnv1a("delete")},
+  {"destroy", TokenKind::KeywordDestroy, fnv1a("destroy")},
+  {"panic", TokenKind::KeywordPanic, fnv1a("panic")}
+}};
+
+struct KeywordBuckets {
+  std::array<int, 256> heads{};
+  std::array<int, Keywords.size()> next{};
+
+  constexpr KeywordBuckets() {
+    heads.fill(-1);
+    next.fill(-1);
+
+    for (std::size_t index = 0; index < Keywords.size(); ++index) {
+      const unsigned char first =
+          static_cast<unsigned char>(Keywords[index].spelling.front());
+
+      next[index] = heads[first];
+      heads[first] = static_cast<int>(index);
+    }
+  }
+};
+
+constexpr KeywordBuckets KeywordIndex{};
+
+static_assert(Keywords.size() == 90, "Sift keyword table changed without updating its declared size.");
 
 // Check whether a byte continues a UTF-8 scalar.
 constexpr bool isContinuationByte(unsigned char value) noexcept {
@@ -1300,293 +1423,32 @@ std::uint64_t Lexer::keywordHash(std::string_view text) noexcept {
 }
 
 TokenKind Lexer::classifyKeyword(std::string_view text) noexcept {
-  // Classify reserved words with length and first-byte dispatch.
-  // The common identifier path performs no hashing, table traversal, or allocation.
-  if (text.empty() || text.size() > 16u) {
+  // Classify closed Sift keywords with first-byte dispatch.
+  if (text.empty()) {
     return TokenKind::Identifier;
   }
 
-  switch (text.size()) {
-    case 2u:
-      switch (text.front()) {
-        case 'd':
-          if (text == "do") return TokenKind::KeywordDo;
-          break;
-        case 'i':
-          if (text == "if") return TokenKind::KeywordIf;
-          if (text == "in") return TokenKind::KeywordIn;
-          break;
-        case 'o':
-          if (text == "os") return TokenKind::KeywordOS;
-          break;
-        default:
-          break;
-      }
-      break;
-    case 3u:
-      switch (text.front()) {
-        case 'a':
-          if (text == "any") return TokenKind::KeywordAny;
-          if (text == "abs") return TokenKind::KeywordAbs;
-          break;
-        case 'e':
-          if (text == "end") return TokenKind::KeywordEnd;
-          break;
-        case 'f':
-          if (text == "for") return TokenKind::KeywordFor;
-          break;
-        case 'i':
-          if (text == "int") return TokenKind::KeywordInt;
-          break;
-        case 'm':
-          if (text == "min") return TokenKind::KeywordMin;
-          if (text == "max") return TokenKind::KeywordMax;
-          break;
-        case 'n':
-          if (text == "num") return TokenKind::KeywordNum;
-          break;
-        case 't':
-          if (text == "try") return TokenKind::KeywordTry;
-          break;
-        case 'v':
-          if (text == "var") return TokenKind::KeywordVar;
-          break;
-        default:
-          break;
-      }
-      break;
-    case 4u:
-      switch (text.front()) {
-        case '@':
-          if (text == "@api") return TokenKind::KeywordAPI;
-          break;
-        case 'b':
-          if (text == "bool") return TokenKind::KeywordBool;
-          break;
-        case 'c':
-          if (text == "case") return TokenKind::KeywordCase;
-          if (text == "call") return TokenKind::KeywordCall;
-          break;
-        case 'd':
-          if (text == "data") return TokenKind::KeywordData;
-          break;
-        case 'e':
-          if (text == "enum") return TokenKind::KeywordEnum;
-          if (text == "else") return TokenKind::KeywordElse;
-          break;
-        case 'f':
-          if (text == "file") return TokenKind::KeywordFile;
-          break;
-        case 'i':
-          if (text == "init") return TokenKind::KeywordInit;
-          break;
-        case 'l':
-          if (text == "loop") return TokenKind::KeywordLoop;
-          break;
-        case 'm':
-          if (text == "math") return TokenKind::KeywordMath;
-          break;
-        case 'o':
-          if (text == "open") return TokenKind::KeywordOpen;
-          break;
-        case 's':
-          if (text == "self") return TokenKind::KeywordSelf;
-          if (text == "some") return TokenKind::KeywordSome;
-          break;
-        case 't':
-          if (text == "type") return TokenKind::KeywordType;
-          if (text == "task") return TokenKind::KeywordTask;
-          if (text == "true") return TokenKind::KeywordTrue;
-          break;
-        case 'w':
-          if (text == "wait") return TokenKind::KeywordWait;
-          break;
-        default:
-          break;
-      }
-      break;
-    case 5u:
-      switch (text.front()) {
-        case '@':
-          if (text == "@file") return TokenKind::KeywordFile;
-          if (text == "@repo") return TokenKind::KeywordRepo;
-          break;
-        case 'a':
-          if (text == "async") return TokenKind::KeywordAsync;
-          if (text == "await") return TokenKind::KeywordAwait;
-          break;
-        case 'b':
-          if (text == "break") return TokenKind::KeywordBreak;
-          if (text == "bytes") return TokenKind::KeywordBytes;
-          break;
-        case 'c':
-          if (text == "const") return TokenKind::KeywordConst;
-          if (text == "class") return TokenKind::KeywordClass;
-          if (text == "catch") return TokenKind::KeywordCatch;
-          break;
-        case 'd':
-          if (text == "defat") return TokenKind::KeywordDefat;
-          if (text == "defer") return TokenKind::KeywordDefer;
-          break;
-        case 'e':
-          if (text == "error") return TokenKind::KeywordError;
-          break;
-        case 'f':
-          if (text == "false") return TokenKind::KeywordFalse;
-          if (text == "final") return TokenKind::KeywordFinal;
-          break;
-        case 'g':
-          if (text == "guard") return TokenKind::KeywordGuard;
-          break;
-        case 't':
-          if (text == "throw") return TokenKind::KeywordThrow;
-          break;
-        case 'w':
-          if (text == "while") return TokenKind::KeywordWhile;
-          break;
-        default:
-          break;
-      }
-      break;
-    case 6u:
-      switch (text.front()) {
-        case 'b':
-          if (text == "backup") return TokenKind::KeywordBackup;
-          if (text == "binary") return TokenKind::KeywordBinary;
-          break;
-        case 'd':
-          if (text == "deinit") return TokenKind::KeywordDeinit;
-          if (text == "delete") return TokenKind::KeywordDelete;
-          break;
-        case 'e':
-          if (text == "export") return TokenKind::KeywordExport;
-          break;
-        case 'i':
-          if (text == "import") return TokenKind::KeywordImport;
-          break;
-        case 'k':
-          if (text == "kernel") return TokenKind::KeywordKernel;
-          break;
-        case 'm':
-          if (text == "module") return TokenKind::KeywordModule;
-          break;
-        case 'o':
-          if (text == "output") return TokenKind::KeywordOutput;
-          break;
-        case 'p':
-          if (text == "public") return TokenKind::KeywordPublic;
-          break;
-        case 'r':
-          if (text == "repeat") return TokenKind::KeywordRepeat;
-          if (text == "return") return TokenKind::KeywordReturn;
-          break;
-        case 's':
-          if (text == "struct") return TokenKind::KeywordStruct;
-          if (text == "switch") return TokenKind::KeywordSwitch;
-          if (text == "string") return TokenKind::KeywordString;
-          if (text == "static") return TokenKind::KeywordStatic;
-          break;
-        case 't':
-          if (text == "throws") return TokenKind::KeywordThrows;
-          break;
-        default:
-          break;
-      }
-      break;
-    case 7u:
-      switch (text.front()) {
-        case '@':
-          if (text == "@fileID") return TokenKind::KeywordFileID;
-          break;
-        case 'c':
-          if (text == "control") return TokenKind::KeywordControl;
-          if (text == "connect") return TokenKind::KeywordConnect;
-          break;
-        case 'd':
-          if (text == "destroy") return TokenKind::KeywordDestroy;
-          break;
-        case 'g':
-          if (text == "getData") return TokenKind::KeywordGetData;
-          break;
-        case 'm':
-          if (text == "message") return TokenKind::KeywordMessage;
-          break;
-        case 'p':
-          if (text == "private") return TokenKind::KeywordPrivate;
-          if (text == "protect") return TokenKind::KeywordProtect;
-          if (text == "package") return TokenKind::KeywordPackage;
-          break;
-        case 'r':
-          if (text == "rethrow") return TokenKind::KeywordRethrow;
-          break;
-        case 's':
-          if (text == "section") return TokenKind::KeywordSection;
-          break;
-        default:
-          break;
-      }
-      break;
-    case 8u:
-      switch (text.front()) {
-        case '@':
-          if (text == "@webLink") return TokenKind::KeywordWebLink;
-          break;
-        case 'c':
-          if (text == "continue") return TokenKind::KeywordContinue;
-          break;
-        case 'd':
-          if (text == "decrease") return TokenKind::KeywordDecrease;
-          break;
-        case 'f':
-          if (text == "function") return TokenKind::KeywordFunction;
-          break;
-        case 'i':
-          if (text == "increase") return TokenKind::KeywordIncrease;
-          break;
-        case 'o':
-          if (text == "overRide") return TokenKind::KeywordOverRide;
-          break;
-        case 'p':
-          if (text == "protocol") return TokenKind::KeywordProtocol;
-          break;
-        case 'r':
-          if (text == "required") return TokenKind::KeywordRequired;
-          break;
-        default:
-          break;
-      }
-      break;
-    case 9u:
-      switch (text.front()) {
-        case '@':
-          if (text == "@database") return TokenKind::KeywordDatabase;
-          break;
-        case 'e':
-          if (text == "extension") return TokenKind::KeywordExtension;
-          break;
-        case 't':
-          if (text == "typealias") return TokenKind::KeywordTypealias;
-          break;
-        default:
-          break;
-      }
-      break;
-    case 10u:
-      switch (text.front()) {
-        case 'c':
-          if (text == "createData") return TokenKind::KeywordCreateData;
-          break;
-        default:
-          break;
-      }
-      break;
-    default:
-      break;
+  const unsigned char first =
+      static_cast<unsigned char>(text.front());
+
+  int keywordIndex = KeywordIndex.heads[first];
+
+  while (keywordIndex >= 0) {
+    const KeywordEntry& keyword =
+        Keywords[static_cast<std::size_t>(keywordIndex)];
+
+    if (keyword.spelling.size() == text.size() &&
+        keyword.spelling == text) {
+      return keyword.kind;
+    }
+
+    keywordIndex =
+        KeywordIndex.next[
+            static_cast<std::size_t>(keywordIndex)];
   }
 
   return TokenKind::Identifier;
 }
-
 TokenKind Lexer::keywordKind(std::string_view text) noexcept {
   return classifyKeyword(text);
 }
@@ -4250,12 +4112,12 @@ bool Lexer::consumeIf(std::string_view value) noexcept {
   const char* current =
       cursor_.current;
 
-  for (std::size_t index = 0;
-       index < length;
-       ++index) {
-    if (current[index] != value[index]) {
-      return false;
-    }
+  if (length != 0u &&
+      std::memcmp(
+          current,
+          value.data(),
+          length) != 0) {
+    return false;
   }
 
   cursor_.current =
@@ -4427,63 +4289,22 @@ std::uint64_t Lexer::keywordHash(std::string_view text) noexcept {
 }
 
 TokenKind Lexer::classifyKeyword(std::string_view text) noexcept {
-  // Sift keywords are a closed part of the grammar. Recognition therefore
-  // stays entirely inside the lexer and never allocates or consults runtime
-  // state.
-  //
-  // The operation intentionally proceeds in several explicit stages:
-  //   1. reject impossible spellings;
-  //   2. reject spellings that cannot be Sift keywords because they contain
-  //      non-ASCII bytes;
-  //   3. calculate the stable compile-time-compatible hash;
-  //   4. select one of 256 buckets;
-  //   5. compare candidate lengths;
-  //   6. compare candidate hashes;
-  //   7. perform the final exact spelling comparison.
-  //
-  // The lexer never constructs a temporary string, never inserts into a
-  // runtime map, and never scans the entire keyword table for an identifier.
-  // This keeps keyword recognition deterministic while leaving the common
-  // identifier path allocation-free.
-  //
-  // Keeping these stages explicit makes the hot path predictable and makes
-  // the token-formation contract easy to audit.
-
-  if (!detail::keywordCandidateCanMatch(text)) {
+  // Classify closed Sift keywords with first-byte dispatch.
+  if (text.empty()) {
     return TokenKind::Identifier;
   }
 
-  const std::uint64_t textHash =
-      keywordHash(text);
+  const unsigned char first =
+      static_cast<unsigned char>(text.front());
 
-  const std::size_t bucket =
-      static_cast<std::size_t>(
-          textHash & 0xffu);
-
-  int keywordIndex =
-      KeywordIndex.heads[bucket];
+  int keywordIndex = KeywordIndex.heads[first];
 
   while (keywordIndex >= 0) {
     const KeywordEntry& keyword =
         Keywords[static_cast<std::size_t>(keywordIndex)];
 
-    if (keyword.spelling.size() != text.size()) {
-      keywordIndex =
-          KeywordIndex.next[
-              static_cast<std::size_t>(keywordIndex)];
-
-      continue;
-    }
-
-    if (keyword.hash != textHash) {
-      keywordIndex =
-          KeywordIndex.next[
-              static_cast<std::size_t>(keywordIndex)];
-
-      continue;
-    }
-
-    if (keyword.spelling == text) {
+    if (keyword.spelling.size() == text.size() &&
+        keyword.spelling == text) {
       return keyword.kind;
     }
 
@@ -4494,7 +4315,6 @@ TokenKind Lexer::classifyKeyword(std::string_view text) noexcept {
 
   return TokenKind::Identifier;
 }
-
 TokenKind Lexer::keywordKind(std::string_view text) noexcept {
   return classifyKeyword(text);
 }
