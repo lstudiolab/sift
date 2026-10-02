@@ -327,6 +327,22 @@ char Lexer::consumeChar() noexcept {
 
   const char value = *cursor_.current;
 
+  if (value == '\r') {
+    ++cursor_.current;
+    ++cursor_.offset;
+
+    if (!atEnd() &&
+        *cursor_.current == '\n') {
+      ++cursor_.current;
+      ++cursor_.offset;
+    }
+
+    ++cursor_.line;
+    cursor_.column = 1;
+
+    return '\n';
+  }
+
   ++cursor_.current;
   ++cursor_.offset;
 
@@ -846,12 +862,43 @@ bool Lexer::isIdentifierContinue(char value) const noexcept {
 }
 
 void Lexer::consumeIdentifier() {
-  while (!atEnd()) {
-    if (!isIdentifierContinue(peekChar())) {
+  const char* current = cursor_.current;
+
+  while (current < cursor_.end) {
+    const unsigned char value =
+        static_cast<unsigned char>(*current);
+
+    if (value < 0x80u) {
+      if (!isAsciiIdentifierContinue(
+              static_cast<char>(value))) {
+        break;
+      }
+
+      ++current;
+      continue;
+    }
+
+    if (!options_.allowUnicodeIdentifiers) {
       break;
     }
 
-    consumeChar();
+    break;
+  }
+
+  const std::size_t asciiBytes =
+      static_cast<std::size_t>(
+          current - cursor_.current);
+
+  if (asciiBytes != 0) {
+    cursor_.current = current;
+    cursor_.offset += asciiBytes;
+    cursor_.column += asciiBytes;
+  }
+
+  if (current < cursor_.end &&
+      static_cast<unsigned char>(*current) >= 0x80u &&
+      options_.allowUnicodeIdentifiers) {
+    consumeUnicodeIdentifier();
   }
 }
 
@@ -872,7 +919,8 @@ void Lexer::skipWhitespace() {
   while (!atEnd()) {
     const char value = peekChar();
 
-    if (value == '\n') {
+    if (value == '\n' ||
+        value == '\r') {
       if (options_.emitNewlines) {
         return;
       }
@@ -902,7 +950,8 @@ void Lexer::skipWhitespace() {
 
 void Lexer::skipLineComment() {
   while (!atEnd()) {
-    if (peekChar() == '\n') {
+    if (peekChar() == '\n' ||
+        peekChar() == '\r') {
       break;
     }
 
@@ -1522,7 +1571,10 @@ Token Lexer::lexAtOrDirective() {
 Token Lexer::lexCommentOrSlash() {
   beginToken();
 
-  if (peekChar() == '/' &&
+  if (detail::isPotentialComment(
+          cursor_.current,
+          cursor_.end) &&
+      peekChar() == '/' &&
       peekChar(1) == '/') {
     consumeChar();
     consumeChar();
@@ -1790,6 +1842,27 @@ void Lexer::updateContext(
   }
 }
 
+Lexer::LexState Lexer::saveState() const noexcept {
+  return {
+      cursor_,
+      tokenStart_,
+      expectingCallingName_,
+      afterFunctionKeyword_,
+      sawFunctionName_,
+      lastWasDot_
+  };
+}
+
+void Lexer::restoreState(
+    const LexState& state) noexcept {
+  cursor_ = state.cursor;
+  tokenStart_ = state.tokenStart;
+  expectingCallingName_ = state.expectingCallingName;
+  afterFunctionKeyword_ = state.afterFunctionKeyword;
+  sawFunctionName_ = state.sawFunctionName;
+  lastWasDot_ = state.lastWasDot;
+}
+
 Token Lexer::lexImpl() {
   for (;;) {
     skipWhitespace();
@@ -1806,7 +1879,8 @@ Token Lexer::lexImpl() {
 
     const char current = peekChar();
 
-    if (current == '\n') {
+    if (current == '\n' ||
+        current == '\r') {
       consumeChar();
 
       if (options_.emitNewlines) {
@@ -1881,6 +1955,10 @@ Token Lexer::lex() {
     hasLookahead_ = false;
     lookahead_ = {};
 
+    updateContext(
+        result.kind,
+        result.text);
+
     return result;
   }
 
@@ -1888,10 +1966,27 @@ Token Lexer::lex() {
 }
 
 Token Lexer::peek() {
-  if (!hasLookahead_) {
-    lookahead_ = lexImpl();
-    hasLookahead_ = true;
+  if (hasLookahead_) {
+    return lookahead_;
   }
+
+  const LexState savedState =
+      saveState();
+
+  const std::size_t savedDiagnosticCount =
+      diagnostics_.size();
+
+  Token speculativeToken =
+      lexImpl();
+
+  restoreState(savedState);
+
+  if (diagnostics_.size() > savedDiagnosticCount) {
+    diagnostics_.resize(savedDiagnosticCount);
+  }
+
+  lookahead_ = speculativeToken;
+  hasLookahead_ = true;
 
   return lookahead_;
 }
