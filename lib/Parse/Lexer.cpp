@@ -935,12 +935,6 @@ inline bool consumeRecoveryRange(
     ++cursor.current;
     ++cursor.offset;
 
-    if (value == '\n') {
-      ++cursor.line;
-      cursor.column = 1;
-    } else {
-      ++cursor.column;
-    }
   }
 
   return true;
@@ -965,8 +959,6 @@ inline bool forceRecoveryProgress(
       ++cursor.offset;
     }
 
-    ++cursor.line;
-    cursor.column = 1;
     return true;
   }
 
@@ -974,8 +966,6 @@ inline bool forceRecoveryProgress(
   ++cursor.offset;
 
   if (value == '\n') {
-    ++cursor.line;
-    cursor.column = 1;
   } else {
     ++cursor.column;
   }
@@ -1107,8 +1097,14 @@ std::size_t Lexer::offset() const noexcept {
 
 // Return the current source location.
 SourceLocation Lexer::location() const noexcept {
+  return locationAt(cursor_.offset);
+}
+
+// Compute a source location from a byte offset only when needed.
+SourceLocation Lexer::locationAt(std::size_t offset) const noexcept {
   const std::size_t targetOffset =
-      std::min(cursor_.offset, source_.size());
+      std::min(offset, source_.size());
+
   const char* begin = source_.data();
   const char* target = begin + targetOffset;
   std::size_t line = 1;
@@ -1119,13 +1115,18 @@ SourceLocation Lexer::location() const noexcept {
        ++current) {
     if (*current == '\n') {
       ++line;
-      lineStart = static_cast<std::size_t>(current + 1 - begin);
+      lineStart = static_cast<std::size_t>(
+          current + 1 - begin);
     } else if (*current == '\r') {
       ++line;
-      lineStart = static_cast<std::size_t>(current + 1 - begin);
-      if (current + 1 < target && current[1] == '\n') {
+      lineStart = static_cast<std::size_t>(
+          current + 1 - begin);
+
+      if (current + 1 < target &&
+          current[1] == '\n') {
         ++current;
-        lineStart = static_cast<std::size_t>(current + 1 - begin);
+        lineStart = static_cast<std::size_t>(
+            current + 1 - begin);
       }
     }
   }
@@ -1197,6 +1198,7 @@ bool Lexer::consumeIf(std::string_view value) noexcept {
 // Record the source position where the next token begins.
 void Lexer::beginToken() noexcept {
   tokenStart_ = cursor_;
+  identifierContainsNonASCII_ = false;
 }
 
 Token Lexer::makeToken(
@@ -1884,10 +1886,7 @@ void Lexer::skipLineComment() {
 
 // Skip a nested block comment and diagnose unterminated input.
 void Lexer::skipBlockComment() {
-  const SourceLocation start = location();
-  const char* current = cursor_.current + 2;
-  const char* end = cursor_.end;
-  unsigned depth = 1;
+  const std::size_t startOffset = cursor_.offset;
 
   cursor_.offset += 2;
 
@@ -1990,9 +1989,7 @@ void Lexer::consumeDigits(unsigned base) {
   if (invalidSeparator) {
     addDiagnostic(
         DiagnosticSeverity::Error,
-        {tokenStart_.offset + separatorOffset,
-         tokenStart_.line,
-         tokenStart_.column + separatorOffset},
+        locationAt(tokenStart_.offset + separatorOffset),
         "invalid numeric separator");
   } else if (sawSeparator && current > begin && current[-1] == '_') {
     addDiagnostic(
@@ -2195,16 +2192,8 @@ Token Lexer::lexIdentifierOrKeyword() {
       static_cast<std::size_t>(
           cursor_.current - tokenStart_.current));
 
-  bool containsNonASCII = false;
-
-  if (options_.allowUnicodeIdentifiers) {
-    containsNonASCII = std::any_of(
-        tokenStart_.current,
-        cursor_.current,
-        [](char value) noexcept {
-          return static_cast<unsigned char>(value) >= 0x80u;
-        });
-  }
+  const bool containsNonASCII =
+      identifierContainsNonASCII_;
 
   if (containsNonASCII &&
       !validateUTF8(
@@ -2212,11 +2201,7 @@ Token Lexer::lexIdentifierOrKeyword() {
           cursor_.current)) {
     addDiagnostic(
         DiagnosticSeverity::Error,
-        {
-            tokenStart_.offset,
-            tokenStart_.line,
-            tokenStart_.column
-        },
+        locationAt(tokenStart_.offset),
         "invalid UTF-8 sequence in identifier");
 
     recoverMalformedToken();
@@ -2394,11 +2379,8 @@ Token Lexer::lexNumber() {
 Token Lexer::lexString() {
   beginToken();
 
-  const SourceLocation start{
-      tokenStart_.offset,
-      tokenStart_.line,
-      tokenStart_.column
-  };
+  const const SourceLocation start =
+      locationAt(tokenStart_.offset);
 
   consumeChar();
 
@@ -2463,11 +2445,7 @@ Token Lexer::lexString() {
       if (containsNonASCII && !validateUTF8(runStart, runEnd)) {
         addDiagnostic(
             DiagnosticSeverity::Error,
-            {
-                cursor_.offset,
-                location().line,
-                location().column
-            },
+            locationAt(cursor_.offset),
             "invalid UTF-8 sequence in string literal");
 
         valid = false;
@@ -2498,11 +2476,8 @@ Token Lexer::lexString() {
 Token Lexer::lexCharacter() {
   beginToken();
 
-  const SourceLocation start{
-      tokenStart_.offset,
-      tokenStart_.line,
-      tokenStart_.column
-  };
+  const const SourceLocation start =
+      locationAt(tokenStart_.offset);
 
   consumeChar();
 
@@ -2779,7 +2754,7 @@ Token Lexer::lexOperatorOrPunctuation() {
   consumeChar();
   addDiagnostic(
       DiagnosticSeverity::Error,
-      {tokenStart_.offset, tokenStart_.line, tokenStart_.column},
+      locationAt(tokenStart_.offset),
       "unrecognized Sift character");
   return finish(TokenKind::Unknown);
 }
@@ -2893,8 +2868,7 @@ Token Lexer::lexImpl() {
       return makeToken(
           TokenKind::EndOfFile,
           cursor_.current,
-          cursor_.current,
-          {});
+          cursor_.current);
     }
 
     beginToken();
@@ -2927,7 +2901,7 @@ Token Lexer::lexImpl() {
         return token;
       }
 
-      case '\\'': {
+      case '\'': {
         Token token = lexCharacter();
         updateContext(token.kind, token.text());
         return token;
