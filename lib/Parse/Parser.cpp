@@ -765,7 +765,7 @@ std::unique_ptr<Expression> Parser::parseBinaryExpression(int minimumPrecedence)
     return nullptr;
   }
 
-  for (;;) {
+  while (true) {
     const int precedence = binaryPrecedence(current_.kind);
     if (precedence < minimumPrecedence) {
       break;
@@ -781,13 +781,13 @@ std::unique_ptr<Expression> Parser::parseBinaryExpression(int minimumPrecedence)
       return left;
     }
 
-    while (binaryPrecedence(current_.kind) > precedence) {
-      const int nextPrecedence = binaryPrecedence(current_.kind);
-      right = parseBinaryExpression(nextPrecedence);
+    const int nextPrecedence = binaryPrecedence(current_.kind);
+    if (nextPrecedence > precedence) {
+      right = parseBinaryExpression(precedence + 1);
       if (!right) {
+        error(current_, "expected right-hand expression");
         return left;
       }
-      break;
     }
 
     auto node = std::make_unique<Expression>();
