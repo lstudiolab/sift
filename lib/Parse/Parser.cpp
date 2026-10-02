@@ -26,10 +26,15 @@ private:
 };
 
 bool isDeclarationKeyword(TokenKind kind) noexcept {
-  return kind == TokenKind::KeywordVar ||
-         kind == TokenKind::KeywordConst ||
-         kind == TokenKind::KeywordFunction ||
-         kind == TokenKind::KeywordStruct;
+  switch (kind) {
+    case TokenKind::KeywordVar:
+    case TokenKind::KeywordConst:
+    case TokenKind::KeywordFunction:
+    case TokenKind::KeywordStruct:
+      return true;
+    default:
+      return false;
+  }
 }
 
 bool isControlKeyword(TokenKind kind) noexcept {
@@ -56,14 +61,19 @@ bool isAssignableExpression(const Expression* expression) noexcept {
 }
 
 bool isTypeToken(TokenKind kind) noexcept {
-  return kind == TokenKind::Identifier ||
-         kind == TokenKind::KeywordInt ||
-         kind == TokenKind::KeywordNum ||
-         kind == TokenKind::KeywordString ||
-         kind == TokenKind::KeywordBool ||
-         kind == TokenKind::KeywordBytes ||
-         kind == TokenKind::KeywordAny ||
-         kind == TokenKind::KeywordSome;
+  switch (kind) {
+    case TokenKind::Identifier:
+    case TokenKind::KeywordInt:
+    case TokenKind::KeywordNum:
+    case TokenKind::KeywordString:
+    case TokenKind::KeywordBool:
+    case TokenKind::KeywordBytes:
+    case TokenKind::KeywordAny:
+    case TokenKind::KeywordSome:
+      return true;
+    default:
+      return false;
+  }
 }
 
 bool isUnaryOperator(TokenKind kind) noexcept {
@@ -724,7 +734,7 @@ std::unique_ptr<Expression> Parser::parseAssignment() {
   }
 
   const Token operatorToken = current_;
-  const std::string op = operatorText(current_.kind);
+  const std::string_view op = operatorText(current_.kind);
   advance();
 
   auto right = parseAssignment();
@@ -945,7 +955,9 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
 
 std::string Parser::parseTypeName() {
   if (isTypeToken(current_.kind)) {
-    std::string type = tokenText(current_);
+    const Token first = current_;
+    std::string type = tokenText(first);
+    type.reserve(static_cast<std::size_t>(first.length) + 16);
     advance();
 
     while (match(TokenKind::Dot)) {
