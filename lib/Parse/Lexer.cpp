@@ -953,6 +953,7 @@ void Lexer::skipBlockComment() {
 void Lexer::consumeDigits(unsigned base) {
   bool sawDigit = false;
   bool previousWasSeparator = false;
+  bool separatorErrorReported = false;
 
   const auto isDigitForBase = [base](char value) noexcept {
     switch (base) {
@@ -974,32 +975,44 @@ void Lexer::consumeDigits(unsigned base) {
 
     if (isDigitForBase(value)) {
       consumeChar();
+
       sawDigit = true;
       previousWasSeparator = false;
+      separatorErrorReported = false;
+
       continue;
     }
 
     if (value == '_') {
       const char next = peekChar(1);
 
-      if (!sawDigit ||
+      const bool separatorIsInvalid =
+          !sawDigit ||
           previousWasSeparator ||
-          !isDigitForBase(next)) {
+          !isDigitForBase(next);
+
+      if (separatorIsInvalid &&
+          !separatorErrorReported) {
         addDiagnostic(
             DiagnosticSeverity::Error,
             location(),
             "invalid numeric separator");
+
+        separatorErrorReported = true;
       }
 
       consumeChar();
+
       previousWasSeparator = true;
+
       continue;
     }
 
     break;
   }
 
-  if (previousWasSeparator) {
+  if (previousWasSeparator &&
+      !separatorErrorReported) {
     addDiagnostic(
         DiagnosticSeverity::Error,
         location(),
@@ -1321,9 +1334,11 @@ Token Lexer::lexNumber() {
           DiagnosticSeverity::Error,
           location(),
           "exponent requires decimal digits");
-    } else {
-      consumeDigits(10);
+
+      return finish(TokenKind::Unknown);
     }
+
+    consumeDigits(10);
   }
 
   if (floating) {
