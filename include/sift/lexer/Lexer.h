@@ -47,6 +47,7 @@ private:
   LexerCursor tokenStart_{};
 
   Token lookahead_{};
+  std::vector<Diagnostic> lookaheadDiagnostics_{};
 
   bool hasLookahead_ = false;
   bool expectingCallingName_ = false;
@@ -133,6 +134,8 @@ private:
   void updateContext(
       TokenKind kind,
       std::string_view text) noexcept;
+
+  void commitLookaheadDiagnostics();
 };
 
 } // namespace sift::lexer
