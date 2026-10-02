@@ -171,7 +171,459 @@ constexpr bool isAsciiDigitValue(char value) noexcept {
   return value >= '0' && value <= '9';
 }
 
-} // namespace
+
+namespace detail {
+
+constexpr unsigned char byteOf(char value) noexcept {
+  return static_cast<unsigned char>(value);
+}
+
+constexpr bool isAsciiLetter(char value) noexcept {
+  return (value >= 'a' && value <= 'z') ||
+         (value >= 'A' && value <= 'Z');
+}
+
+constexpr bool isAsciiDigit(char value) noexcept {
+  return value >= '0' && value <= '9';
+}
+
+constexpr bool isAsciiHexDigit(char value) noexcept {
+  return isAsciiDigit(value) ||
+         (value >= 'a' && value <= 'f') ||
+         (value >= 'A' && value <= 'F');
+}
+
+constexpr bool isAsciiBinaryDigit(char value) noexcept {
+  return value == '0' || value == '1';
+}
+
+constexpr bool isAsciiOctalDigit(char value) noexcept {
+  return value >= '0' && value <= '7';
+}
+
+constexpr bool isAsciiIdentifierStart(char value) noexcept {
+  return isAsciiLetter(value) || value == '_';
+}
+
+constexpr bool isAsciiIdentifierContinue(char value) noexcept {
+  return isAsciiIdentifierStart(value) ||
+         isAsciiDigit(value);
+}
+
+constexpr bool isHorizontalWhitespace(char value) noexcept {
+  return value == ' ' ||
+         value == '\t' ||
+         value == '\v' ||
+         value == '\f' ||
+         value == '\r';
+}
+
+constexpr bool isLineBreak(char value) noexcept {
+  return value == '\n';
+}
+
+constexpr bool isQuote(char value) noexcept {
+  return value == '"' || value == '\'';
+}
+
+constexpr bool isOperatorLead(char value) noexcept {
+  switch (value) {
+    case '=':
+    case '!':
+    case '+':
+    case '-':
+    case '*':
+    case '/':
+    case '%':
+    case '<':
+    case '>':
+    case '&':
+    case '|':
+    case '~':
+      return true;
+    default:
+      return false;
+  }
+}
+
+constexpr bool isPunctuationLead(char value) noexcept {
+  switch (value) {
+    case '(':
+    case ')':
+    case '{':
+    case '}':
+    case '[':
+    case ']':
+    case ',':
+    case '.':
+    case ':':
+    case ';':
+    case '?':
+      return true;
+    default:
+      return false;
+  }
+}
+
+constexpr bool isValidUnicodeScalar(std::uint32_t value) noexcept {
+  return value <= 0x10ffffu &&
+         !(value >= 0xd800u && value <= 0xdfffu);
+}
+
+constexpr bool isContinuationByte(unsigned char value) noexcept {
+  return (value & 0xc0u) == 0x80u;
+}
+
+constexpr bool isTwoByteLead(unsigned char value) noexcept {
+  return (value & 0xe0u) == 0xc0u;
+}
+
+constexpr bool isThreeByteLead(unsigned char value) noexcept {
+  return (value & 0xf0u) == 0xe0u;
+}
+
+constexpr bool isFourByteLead(unsigned char value) noexcept {
+  return (value & 0xf8u) == 0xf0u;
+}
+
+constexpr unsigned utf8Length(unsigned char value) noexcept {
+  if (value < 0x80u) {
+    return 1u;
+  }
+
+  if (isTwoByteLead(value)) {
+    return 2u;
+  }
+
+  if (isThreeByteLead(value)) {
+    return 3u;
+  }
+
+  if (isFourByteLead(value)) {
+    return 4u;
+  }
+
+  return 0u;
+}
+
+constexpr std::uint32_t utf8Minimum(unsigned length) noexcept {
+  switch (length) {
+    case 1u:
+      return 0u;
+    case 2u:
+      return 0x80u;
+    case 3u:
+      return 0x800u;
+    case 4u:
+      return 0x10000u;
+    default:
+      return 0xffffffffu;
+  }
+}
+
+inline bool hasBytes(
+    const char* current,
+    const char* end,
+    std::size_t count) noexcept {
+  if (current > end) {
+    return false;
+  }
+
+  return static_cast<std::size_t>(end - current) >= count;
+}
+
+inline bool matches(
+    const char* current,
+    const char* end,
+    std::string_view text) noexcept {
+  if (!hasBytes(current, end, text.size())) {
+    return false;
+  }
+
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    if (current[index] != text[index]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+inline bool startsBOM(
+    const char* current,
+    const char* end) noexcept {
+  return hasBytes(current, end, 3u) &&
+         byteOf(current[0]) == 0xefu &&
+         byteOf(current[1]) == 0xbbu &&
+         byteOf(current[2]) == 0xbfu;
+}
+
+inline bool isPotentialComment(
+    const char* current,
+    const char* end) noexcept {
+  return hasBytes(current, end, 2u) &&
+         current[0] == '/' &&
+         (current[1] == '/' || current[1] == '*');
+}
+
+inline bool isPotentialLeadingFloat(
+    char current,
+    char next) noexcept {
+  return current == '.' && isAsciiDigit(next);
+}
+
+inline bool isPotentialIdentifier(
+    char current) noexcept {
+  return isAsciiIdentifierStart(current) ||
+         byteOf(current) >= 0x80u;
+}
+
+inline bool isCompoundAssignment(
+    char current,
+    char next) noexcept {
+  switch (current) {
+    case '+':
+    case '-':
+    case '*':
+    case '/':
+    case '%':
+      return next == '=';
+    default:
+      return false;
+  }
+}
+
+inline bool isComparisonPair(
+    char current,
+    char next) noexcept {
+  return (current == '=' && next == '=') ||
+         (current == '!' && next == '=') ||
+         (current == '<' && next == '=') ||
+         (current == '>' && next == '=') ||
+         (current == '~' && next == '=');
+}
+
+inline bool isLogicalPair(
+    char current,
+    char next) noexcept {
+  return (current == '&' && next == '&') ||
+         (current == '|' && next == '|');
+}
+
+inline bool isArrowPair(
+    char current,
+    char next) noexcept {
+  return current == '-' && next == '>';
+}
+
+inline bool isSeparator(char value) noexcept {
+  return value == '_';
+}
+
+inline const char* scanIdentifierASCII(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end &&
+         isAsciiIdentifierContinue(*current)) {
+    ++current;
+  }
+
+  return current;
+}
+
+inline const char* scanDecimal(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end &&
+         (isAsciiDigit(*current) || isSeparator(*current))) {
+    ++current;
+  }
+
+  return current;
+}
+
+inline const char* scanHexadecimal(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end &&
+         (isAsciiHexDigit(*current) || isSeparator(*current))) {
+    ++current;
+  }
+
+  return current;
+}
+
+inline const char* scanBinary(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end &&
+         (isAsciiBinaryDigit(*current) || isSeparator(*current))) {
+    ++current;
+  }
+
+  return current;
+}
+
+inline const char* scanOctal(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end &&
+         (isAsciiOctalDigit(*current) || isSeparator(*current))) {
+    ++current;
+  }
+
+  return current;
+}
+
+inline bool validateCodePoint(
+    const char* current,
+    const char* end,
+    unsigned& consumed) noexcept {
+  consumed = 0u;
+
+  if (!hasBytes(current, end, 1u)) {
+    return false;
+  }
+
+  const unsigned char lead = byteOf(*current);
+
+  if (lead < 0x80u) {
+    consumed = 1u;
+    return true;
+  }
+
+  const unsigned length = utf8Length(lead);
+
+  if (length < 2u || !hasBytes(current, end, length)) {
+    return false;
+  }
+
+  std::uint32_t value = 0u;
+
+  if (length == 2u) {
+    value = lead & 0x1fu;
+  } else if (length == 3u) {
+    value = lead & 0x0fu;
+  } else {
+    value = lead & 0x07u;
+  }
+
+  for (unsigned index = 1u; index < length; ++index) {
+    const unsigned char continuation =
+        byteOf(current[index]);
+
+    if (!isContinuationByte(continuation)) {
+      return false;
+    }
+
+    value =
+        (value << 6u) |
+        static_cast<std::uint32_t>(continuation & 0x3fu);
+  }
+
+  if (value < utf8Minimum(length)) {
+    return false;
+  }
+
+  if (!isValidUnicodeScalar(value)) {
+    return false;
+  }
+
+  consumed = length;
+  return true;
+}
+
+inline bool keywordCandidateCanMatch(
+    std::string_view text) noexcept {
+  if (text.empty()) {
+    return false;
+  }
+
+  if (text.size() > 16u) {
+    return false;
+  }
+
+  for (char value : text) {
+    if (byteOf(value) >= 0x80u) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+inline bool isTrivia(TokenKind kind) noexcept {
+  return kind == TokenKind::Comment ||
+         kind == TokenKind::Newline;
+}
+
+inline bool isLiteral(TokenKind kind) noexcept {
+  return kind == TokenKind::IntegerLiteral ||
+         kind == TokenKind::FloatingLiteral ||
+         kind == TokenKind::StringLiteral ||
+         kind == TokenKind::CharacterLiteral;
+}
+
+inline bool isComparison(TokenKind kind) noexcept {
+  switch (kind) {
+    case TokenKind::EqualEqual:
+    case TokenKind::BangEqual:
+    case TokenKind::Less:
+    case TokenKind::LessEqual:
+    case TokenKind::Greater:
+    case TokenKind::GreaterEqual:
+    case TokenKind::TildeEqual:
+      return true;
+    default:
+      return false;
+  }
+}
+
+inline bool isAssignment(TokenKind kind) noexcept {
+  switch (kind) {
+    case TokenKind::Equal:
+    case TokenKind::PlusEqual:
+    case TokenKind::MinusEqual:
+    case TokenKind::StarEqual:
+    case TokenKind::SlashEqual:
+    case TokenKind::PercentEqual:
+      return true;
+    default:
+      return false;
+  }
+}
+
+inline bool isStructural(TokenKind kind) noexcept {
+  switch (kind) {
+    case TokenKind::LeftParen:
+    case TokenKind::RightParen:
+    case TokenKind::LeftBrace:
+    case TokenKind::RightBrace:
+    case TokenKind::LeftBracket:
+    case TokenKind::RightBracket:
+      return true;
+    default:
+      return false;
+  }
+}
+
+inline bool isKeywordLike(TokenKind kind) noexcept {
+  switch (kind) {
+    case TokenKind::Identifier:
+    case TokenKind::CallingName:
+    case TokenKind::IntegerLiteral:
+    case TokenKind::FloatingLiteral:
+    case TokenKind::StringLiteral:
+    case TokenKind::CharacterLiteral:
+    case TokenKind::EndOfFile:
+    case TokenKind::Unknown:
+      return false;
+    default:
+      return true;
+  }
+}
+
+} // namespace detail
 
 Lexer::Lexer(std::string_view source, LexerOptions options) noexcept
     : source_(source),
@@ -398,11 +850,7 @@ TokenKind Lexer::classifyKeyword(std::string_view text) noexcept {
   // Keeping these stages explicit makes the hot path predictable and makes
   // the token-formation contract easy to audit.
 
-  if (text.empty()) {
-    return TokenKind::Identifier;
-  }
-
-  if (text.size() > 16u) {
+  if (!detail::keywordCandidateCanMatch(text)) {
     return TokenKind::Identifier;
   }
 
@@ -1274,7 +1722,7 @@ Token Lexer::lexNumber() {
   }
 
   if (peekChar() == '.' &&
-      isDecimalDigit(peekChar(1))) {
+      detail::isAsciiDigit(peekChar(1))) {
     floating = true;
 
     consumeChar();
@@ -1777,9 +2225,9 @@ Token Lexer::lexImpl() {
       continue;
     }
 
-    if (current == '/' &&
-        (peekChar(1) == '/' ||
-         peekChar(1) == '*')) {
+    if (detail::isPotentialComment(
+            cursor_.current,
+            cursor_.end)) {
       Token token = lexCommentOrSlash();
 
       if (!options_.retainComments) {
@@ -1789,13 +2237,14 @@ Token Lexer::lexImpl() {
       return token;
     }
 
-    if (isIdentifierStart(current)) {
+    if (detail::isPotentialIdentifier(current) &&
+        isIdentifierStart(current)) {
       Token token = lexIdentifierOrKeyword();
       updateContext(token.kind, token.text);
       return token;
     }
 
-    if (isDecimalDigit(current) ||
+    if (detail::isAsciiDigit(current) ||
         (current == '.' &&
          options_.allowLeadingDotFloat &&
          isDecimalDigit(peekChar(1)))) {
@@ -1804,25 +2253,25 @@ Token Lexer::lexImpl() {
       return token;
     }
 
-    if (current == '"') {
+    if (detail::isDoubleQuote(current)) {
       Token token = lexString();
       updateContext(token.kind, token.text);
       return token;
     }
 
-    if (current == '\'') {
+    if (detail::isSingleQuote(current)) {
       Token token = lexCharacter();
       updateContext(token.kind, token.text);
       return token;
     }
 
-    if (current == '#') {
+    if (detail::isHashLead(current)) {
       Token token = lexHashOrDirective();
       updateContext(token.kind, token.text);
       return token;
     }
 
-    if (current == '@') {
+    if (detail::isAtLead(current)) {
       Token token = lexAtOrDirective();
       updateContext(token.kind, token.text);
       return token;
