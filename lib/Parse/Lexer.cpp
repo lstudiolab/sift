@@ -1591,7 +1591,15 @@ Token Lexer::lexCharacter() {
   }
 
   if (peekChar() == '\\') {
-    consumeEscapeSequence();
+    if (!consumeEscapeSequence()) {
+      recoverCharacterLiteral();
+
+      if (peekChar() == '\'') {
+        consumeChar();
+      }
+
+      return finish(TokenKind::Unknown);
+    }
   } else {
     if (peekChar() == '\n') {
       addDiagnostic(
