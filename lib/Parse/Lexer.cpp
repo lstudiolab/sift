@@ -1070,8 +1070,6 @@ Lexer::Lexer(std::string_view source, LexerOptions options) noexcept
   cursor_.current = source_.data();
   cursor_.end = source_.data() + source_.size();
   cursor_.offset = 0;
-  cursor_.line = 1;
-  cursor_.column = 1;
 
   tokenStart_ = cursor_;
 }
@@ -1082,8 +1080,6 @@ void Lexer::reset() noexcept {
   cursor_.current = source_.data();
   cursor_.end = source_.data() + source_.size();
   cursor_.offset = 0;
-  cursor_.line = 1;
-  cursor_.column = 1;
 
   tokenStart_ = cursor_;
 
@@ -1111,10 +1107,33 @@ std::size_t Lexer::offset() const noexcept {
 
 // Return the current source location.
 SourceLocation Lexer::location() const noexcept {
+  const std::size_t targetOffset =
+      std::min(cursor_.offset, source_.size());
+  const char* begin = source_.data();
+  const char* target = begin + targetOffset;
+  std::size_t line = 1;
+  std::size_t lineStart = 0;
+
+  for (const char* current = begin;
+       current < target;
+       ++current) {
+    if (*current == '\\n') {
+      ++line;
+      lineStart = static_cast<std::size_t>(current + 1 - begin);
+    } else if (*current == '\\r') {
+      ++line;
+      lineStart = static_cast<std::size_t>(current + 1 - begin);
+      if (current + 1 < target && current[1] == '\\n') {
+        ++current;
+        lineStart = static_cast<std::size_t>(current + 1 - begin);
+      }
+    }
+  }
+
   return {
-      cursor_.offset,
-      cursor_.line,
-      cursor_.column
+      targetOffset,
+      line,
+      targetOffset - lineStart + 1
   };
 }
 
@@ -1170,7 +1189,6 @@ bool Lexer::consumeIf(std::string_view value) noexcept {
   cursor_.current =
       current + length;
   cursor_.offset += length;
-  cursor_.column += length;
 
   return true;
 }
@@ -1185,15 +1203,17 @@ Token Lexer::makeToken(
     TokenKind kind,
     const char* begin,
     const char* end,
-    SourceLocation tokenLocation) const noexcept {
+    SourceLocation) const noexcept {
+  const std::size_t start =
+      static_cast<std::size_t>(begin - source_.data());
   const std::size_t length =
       static_cast<std::size_t>(end - begin);
 
   return {
       kind,
-      std::string_view(begin, length),
-      tokenLocation,
-      static_cast<std::size_t>(end - source_.data())
+      source_.data(),
+      static_cast<std::uint32_t>(start),
+      static_cast<std::uint32_t>(length)
   };
 }
 
@@ -1204,11 +1224,7 @@ Token Lexer::finish(TokenKind kind) noexcept {
       kind,
       tokenStart_.current,
       cursor_.current,
-      {
-          tokenStart_.offset,
-          tokenStart_.line,
-          tokenStart_.column
-      });
+      {});
 }
 
 // Record a diagnostic while allowing lexing to continue.
@@ -1714,8 +1730,7 @@ void Lexer::consumeIdentifier() {
   if (asciiBytes != 0) {
     cursor_.current = current;
     cursor_.offset += asciiBytes;
-    cursor_.column += asciiBytes;
-  }
+    }
 
   // Unicode is deliberately kept as a separate slow path. This preserves
   // the fast ASCII path while retaining the language option for Unicode
@@ -1741,7 +1756,6 @@ void Lexer::consumeUnicodeIdentifier() {
 
       ++cursor_.current;
       ++cursor_.offset;
-      ++cursor_.column;
       continue;
     }
 
@@ -1756,7 +1770,6 @@ void Lexer::consumeUnicodeIdentifier() {
     } else {
       ++cursor_.current;
       ++cursor_.offset;
-      ++cursor_.column;
       continue;
     }
 
@@ -1770,8 +1783,7 @@ void Lexer::consumeUnicodeIdentifier() {
                  *cursor_.current) >= 0x80u) {
         ++cursor_.current;
         ++cursor_.offset;
-        ++cursor_.column;
-      }
+        }
       break;
     }
 
@@ -1789,14 +1801,12 @@ void Lexer::consumeUnicodeIdentifier() {
     if (!valid) {
       ++cursor_.current;
       ++cursor_.offset;
-      ++cursor_.column;
       continue;
     }
 
     cursor_.current += width;
     cursor_.offset += width;
-    cursor_.column += width;
-  }
+    }
 }
 
 // Skip whitespace and normalize supported line endings.
@@ -1814,8 +1824,7 @@ void Lexer::skipWhitespace() {
             cursor_.end)) {
       cursor_.current += 3;
       cursor_.offset += 3;
-      cursor_.column += 3;
-      continue;
+          continue;
     }
 
     const char* begin =
@@ -1833,8 +1842,7 @@ void Lexer::skipWhitespace() {
 
       cursor_.current = afterHorizontal;
       cursor_.offset += consumed;
-      cursor_.column += consumed;
-      continue;
+          continue;
     }
 
     const char value = *cursor_.current;
@@ -1869,7 +1877,6 @@ void Lexer::skipLineComment() {
 
   cursor_.current = end;
   cursor_.offset += consumed;
-  cursor_.column += consumed;
 }
 
 // Skip a nested block comment and diagnose unterminated input.
@@ -1880,7 +1887,6 @@ void Lexer::skipBlockComment() {
   unsigned depth = 1;
 
   cursor_.offset += 2;
-  cursor_.column += 2;
 
   while (current < end) {
     const char value = current[0];
@@ -1888,8 +1894,6 @@ void Lexer::skipBlockComment() {
     if (value == '\n') {
       ++current;
       ++cursor_.offset;
-      ++cursor_.line;
-      cursor_.column = 1;
       continue;
     }
 
@@ -1900,24 +1904,20 @@ void Lexer::skipBlockComment() {
         ++current;
         ++cursor_.offset;
       }
-      ++cursor_.line;
-      cursor_.column = 1;
       continue;
     }
 
     if (value == '/' && current + 1 < end && current[1] == '*') {
       current += 2;
       cursor_.offset += 2;
-      cursor_.column += 2;
-      ++depth;
+          ++depth;
       continue;
     }
 
     if (value == '*' && current + 1 < end && current[1] == '/') {
       current += 2;
       cursor_.offset += 2;
-      cursor_.column += 2;
-      --depth;
+          --depth;
       if (depth == 0) {
         cursor_.current = current;
         return;
@@ -1932,8 +1932,7 @@ void Lexer::skipBlockComment() {
 
     const std::size_t consumed = static_cast<std::size_t>(current - run);
     cursor_.offset += consumed;
-    cursor_.column += consumed;
-  }
+    }
 
   cursor_.current = current;
   addDiagnostic(DiagnosticSeverity::Error, start, "unterminated block comment");
@@ -1984,7 +1983,6 @@ void Lexer::consumeDigits(unsigned base) {
   const std::size_t consumed = static_cast<std::size_t>(current - begin);
   cursor_.current = current;
   cursor_.offset += consumed;
-  cursor_.column += consumed;
 
   if (invalidSeparator) {
     addDiagnostic(
@@ -1997,8 +1995,8 @@ void Lexer::consumeDigits(unsigned base) {
     addDiagnostic(
         DiagnosticSeverity::Error,
         {cursor_.offset - 1,
-         cursor_.line,
-         cursor_.column - 1},
+         location().line,
+         location().column - 1},
         "numeric literal cannot end with a separator");
   }
 }
@@ -2464,8 +2462,8 @@ Token Lexer::lexString() {
             DiagnosticSeverity::Error,
             {
                 cursor_.offset,
-                cursor_.line,
-                cursor_.column
+                location().line,
+                location().column
             },
             "invalid UTF-8 sequence in string literal");
 
@@ -2478,8 +2476,7 @@ Token Lexer::lexString() {
 
       cursor_.current = runEnd;
       cursor_.offset += consumed;
-      cursor_.column += consumed;
-      continue;
+          continue;
     }
 
     consumeChar();
@@ -2588,8 +2585,7 @@ Token Lexer::lexCharacter() {
 
     cursor_.current += width;
     cursor_.offset += width;
-    cursor_.column += width;
-
+  
     if (!validateUTF8(scalarStart, cursor_.current)) {
       addDiagnostic(
           DiagnosticSeverity::Error,
@@ -2735,8 +2731,7 @@ Token Lexer::lexOperatorOrPunctuation() {
   auto advance = [this, current](std::size_t count) noexcept {
     cursor_.current = current + count;
     cursor_.offset += count;
-    cursor_.column += count;
-  };
+    };
 
   switch (first) {
     case '(': advance(1); return finish(TokenKind::LeftParen);
@@ -2892,80 +2887,85 @@ Token Lexer::lexImpl() {
           TokenKind::EndOfFile,
           cursor_.current,
           cursor_.current,
-          location());
+          {});
     }
 
     beginToken();
-
     const char current = peekChar();
 
-    if (current == '\n' ||
-        current == '\r') {
-      consumeChar();
-
-      if (options_.emitNewlines) {
-        return finish(TokenKind::Newline);
-      }
-
-      continue;
-    }
-
-    // Slash is checked before the general operator path because it can
-    // begin either a comment or a slash token. Keeping this branch early
-    // avoids entering the larger punctuation/operator switch for comments.
-    if (current == '/') {
-      Token token = lexCommentOrSlash();
-
-      if (token.kind == TokenKind::Comment &&
-          !options_.retainComments) {
+    switch (current) {
+      case '\\n':
+      case '\\r': {
+        consumeChar();
+        if (options_.emitNewlines) {
+          Token token = finish(TokenKind::Newline);
+          updateContext(token.kind, token.text());
+          return token;
+        }
         continue;
       }
 
-      updateContext(token.kind, token.text);
-      return token;
+      case '/': {
+        Token token = lexCommentOrSlash();
+        if (token.kind == TokenKind::Comment && !options_.retainComments) {
+          continue;
+        }
+        updateContext(token.kind, token.text());
+        return token;
+      }
+
+      case '"': {
+        Token token = lexString();
+        updateContext(token.kind, token.text());
+        return token;
+      }
+
+      case '\\'': {
+        Token token = lexCharacter();
+        updateContext(token.kind, token.text());
+        return token;
+      }
+
+      case '#': {
+        Token token = lexHashOrDirective();
+        updateContext(token.kind, token.text());
+        return token;
+      }
+
+      case '@': {
+        Token token = lexAtOrDirective();
+        updateContext(token.kind, token.text());
+        return token;
+      }
+
+      case '.':
+        if (options_.allowLeadingDotFloat && detail::isAsciiDigit(peekChar(1))) {
+          Token token = lexNumber();
+          updateContext(token.kind, token.text());
+          return token;
+        }
+        break;
+
+      default:
+        break;
     }
 
-    if (isIdentifierStart(current)) {
+    if (detail::isAsciiIdentifierStart(current) ||
+        (options_.allowUnicodeIdentifiers &&
+         static_cast<unsigned char>(current) >= 0x80u)) {
       Token token = lexIdentifierOrKeyword();
-      updateContext(token.kind, token.text);
+      updateContext(token.kind, token.text());
       return token;
     }
 
-    if (detail::isAsciiDigit(current) ||
-        (current == '.' &&
-         options_.allowLeadingDotFloat &&
-         detail::isAsciiDigit(peekChar(1)))) {
+    if (detail::isAsciiDigit(current)) {
       Token token = lexNumber();
-      updateContext(token.kind, token.text);
-      return token;
-    }
-
-    if (detail::isDoubleQuote(current)) {
-      Token token = lexString();
-      updateContext(token.kind, token.text);
-      return token;
-    }
-
-    if (detail::isSingleQuote(current)) {
-      Token token = lexCharacter();
-      updateContext(token.kind, token.text);
-      return token;
-    }
-
-    if (detail::isHashLead(current)) {
-      Token token = lexHashOrDirective();
-      updateContext(token.kind, token.text);
-      return token;
-    }
-
-    if (detail::isAtLead(current)) {
-      Token token = lexAtOrDirective();
-      updateContext(token.kind, token.text);
+      updateContext(token.kind, token.text());
       return token;
     }
 
     Token token = lexOperatorOrPunctuation();
-    updateContext(token.kind, token.text);
+    updateContext(token.kind, token.text());
     return token;
   }
 }
