@@ -3216,5 +3216,22 @@ inline const char* recoveryOperatorTail(const char* current, const char* end) no
   }
   return end;
 }
+// Confirm that the cursor reached a usable recovery restart.
+inline bool recoveryCanResume(const LexerCursor& cursor) noexcept {
+  if (cursor.current >= cursor.end) return true;
+  const char value = *cursor.current;
+  if (value == 10 || value == 13) return true;
+  if (value == 59 || value == 44) return true;
+  if (value == 41 || value == 93 || value == 125) return true;
+  if (value == 64 || value == 35) return true;
+  if (isAsciiLetter(value)) return true;
+  if (isAsciiDigitValue(value)) return true;
+  if (value == 95 || value == 36) return true;
+  if (value == 33 || value == 43 || value == 45) return true;
+  if (value == 42 || value == 60 || value == 62) return true;
+  if (value == 61 || value == 37 || value == 38) return true;
+  if (value == 124 || value == 126) return true;
+  return static_cast<unsigned char>(value) >= 128u;
+}
 
 } // namespace sift::lexer
