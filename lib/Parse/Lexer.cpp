@@ -11,12 +11,6 @@
 // that may ultimately target low-level and bare-metal backends.
 
 #include "sift/Parse/Lexer.h"
-#include "sift/Parse/Diagnostic.h"
-#include "sift/Parse/LexerCursor.h"
-#include "sift/Parse/LexerOptions.h"
-#include "sift/Parse/SourceLocation.h"
-#include "sift/Parse/Token.h"
-#include "sift/Parse/TokenKind.h"
 
 #include <algorithm>
 #include <array>
