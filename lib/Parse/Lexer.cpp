@@ -19,9 +19,7 @@
 #include "sift/lexer/TokenKind.h"
 
 #include <array>
-#include <cassert>
 #include <cstdint>
-#include <limits>
 #include <string_view>
 
 namespace sift::lexer {
