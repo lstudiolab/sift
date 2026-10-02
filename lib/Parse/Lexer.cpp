@@ -1976,56 +1976,81 @@ void Lexer::skipLineComment() {
 void Lexer::skipBlockComment() {
   const std::size_t startOffset = cursor_.offset;
 
-  cursor_.offset += 2;
+  if (cursor_.current + 1 >= cursor_.end) {
+    return;
+  }
+
+  const char* current = cursor_.current + 2;
+  const char* end = cursor_.end;
+  std::size_t offset = cursor_.offset + 2;
+  unsigned depth = 1;
 
   while (current < end) {
     const char value = current[0];
 
-    if (value == '\n') {
-      ++current;
-      ++cursor_.offset;
+    if (value == '/' &&
+        current + 1 < end &&
+        current[1] == '*') {
+      current += 2;
+      offset += 2;
+      ++depth;
+      continue;
+    }
+
+    if (value == '*' &&
+        current + 1 < end &&
+        current[1] == '/') {
+      current += 2;
+      offset += 2;
+      --depth;
+
+      if (depth == 0) {
+        cursor_.current = current;
+        cursor_.offset = offset;
+        return;
+      }
+
       continue;
     }
 
     if (value == '\r') {
       ++current;
-      ++cursor_.offset;
-      if (current < end && current[0] == '\n') {
+      ++offset;
+
+      if (current < end && *current == '\n') {
         ++current;
-        ++cursor_.offset;
+        ++offset;
       }
+
       continue;
     }
 
-    if (value == '/' && current + 1 < end && current[1] == '*') {
-      current += 2;
-      cursor_.offset += 2;
-          ++depth;
-      continue;
-    }
-
-    if (value == '*' && current + 1 < end && current[1] == '/') {
-      current += 2;
-      cursor_.offset += 2;
-          --depth;
-      if (depth == 0) {
-        cursor_.current = current;
-        return;
-      }
+    if (value == '\n') {
+      ++current;
+      ++offset;
       continue;
     }
 
     const char* run = current;
-    do {
-      ++current;
-    } while (current < end && current[0] != '/' && current[0] != '*' && current[0] != '\n' && current[0] != '\r');
 
-    const std::size_t consumed = static_cast<std::size_t>(current - run);
-    cursor_.offset += consumed;
+    while (current < end &&
+           *current != '/' &&
+           *current != '*' &&
+           *current != '\n' &&
+           *current != '\r') {
+      ++current;
     }
 
+    offset += static_cast<std::size_t>(current - run);
+  }
+
   cursor_.current = current;
-  addDiagnostic(DiagnosticSeverity::Error, start, "unterminated block comment");
+  cursor_.offset = offset;
+
+  addDiagnostic(
+      DiagnosticSeverity::Error,
+      locationAt(startOffset),
+      "unterminated block comment");
 }
 
 // Consume digits for an integer or floating-point component.
@@ -2332,7 +2357,10 @@ Token Lexer::lexNumber() {
             location(),
             "hexadecimal literal requires hexadecimal digits");
 
-        recoverAfterLexicalError(false);
+        while (isAsciiIdentifierContinue(peekChar())) {
+          consumeChar();
+        }
+
         return finish(TokenKind::Unknown);
       }
 
@@ -2362,7 +2390,10 @@ Token Lexer::lexNumber() {
             location(),
             "binary literal requires binary digits");
 
-        recoverAfterLexicalError(false);
+        while (isAsciiIdentifierContinue(peekChar())) {
+          consumeChar();
+        }
+
         return finish(TokenKind::Unknown);
       }
 
@@ -2392,7 +2423,10 @@ Token Lexer::lexNumber() {
             location(),
             "octal literal requires octal digits");
 
-        recoverMalformedToken();
+        while (isAsciiIdentifierContinue(peekChar())) {
+          consumeChar();
+        }
+
         return finish(TokenKind::Unknown);
       }
 
