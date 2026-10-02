@@ -316,17 +316,6 @@ inline const char* scanAsciiIdentifier(
   return current;
 }
 
-inline const char* scanHorizontalWhitespace(
-    const char* current,
-    const char* end) noexcept {
-  while (current < end &&
-         isHorizontalWhitespace(*current)) {
-    ++current;
-  }
-
-  return current;
-}
-
 inline const char* scanUntilLineBreak(
     const char* current,
     const char* end) noexcept {
@@ -2324,24 +2313,12 @@ Token Lexer::lexCallingName() {
   return token;
 }
 
-} // namespace sift::lexer
- &&
+} // namespace sift::lexer &&
         !isAsciiDigit(
             static_cast<char>(value))) {
       break;
     }
 
-    ++current;
-  }
-
-  return current;
-}
-
-inline const char* scanHorizontalWhitespace(
-    const char* current,
-    const char* end) noexcept {
-  while (current < end &&
-         isHorizontalWhitespace(*current)) {
     ++current;
   }
 
