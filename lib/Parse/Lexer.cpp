@@ -938,6 +938,7 @@ Lexer::Lexer(std::string_view source, LexerOptions options) noexcept
   cursor_.end = source_.data() + source_.size();
   cursor_.offset = 0;
 
+  lineStarts_.reserve(source_.size() / 32u + 1u);
   lineStarts_.push_back(0);
 
   for (std::size_t index = 0; index < source_.size(); ++index) {
@@ -977,6 +978,10 @@ void Lexer::reset() noexcept {
   sawFunctionName_ = false;
   lastWasDot_ = false;
 
+  cachedLocationOffset_ = 0;
+  cachedLineIndex_ = 0;
+  hasCachedLocation_ = false;
+
   diagnostics_.clear();
 }
 
@@ -1003,15 +1008,31 @@ SourceLocation Lexer::locationAt(std::size_t offset) const noexcept {
     return {targetOffset, 1, targetOffset + 1};
   }
 
-  const auto iterator =
-      std::upper_bound(
-          lineStarts_.begin(),
-          lineStarts_.end(),
-          targetOffset);
+  std::size_t lineIndex = 0;
 
-  const std::size_t lineIndex =
-      static_cast<std::size_t>(
-          iterator - lineStarts_.begin() - 1);
+  if (hasCachedLocation_ &&
+      targetOffset >= cachedLocationOffset_) {
+    lineIndex = cachedLineIndex_;
+
+    while (lineIndex + 1 < lineStarts_.size() &&
+           lineStarts_[lineIndex + 1] <= targetOffset) {
+      ++lineIndex;
+    }
+  } else {
+    const auto iterator =
+        std::upper_bound(
+            lineStarts_.begin(),
+            lineStarts_.end(),
+            targetOffset);
+
+    lineIndex =
+        static_cast<std::size_t>(
+            iterator - lineStarts_.begin() - 1);
+  }
+
+  cachedLocationOffset_ = targetOffset;
+  cachedLineIndex_ = lineIndex;
+  hasCachedLocation_ = true;
 
   const std::size_t lineStart =
       lineStarts_[lineIndex];
@@ -2200,7 +2221,6 @@ bool Lexer::validateUTF8(
 // Lex an identifier and classify its keyword spelling.
 // Lex an identifier and classify reserved keyword spellings.
 Token Lexer::lexIdentifierOrKeyword() {
-  beginToken();
   consumeIdentifier();
 
   const std::string_view spelling(
@@ -2244,7 +2264,6 @@ Token Lexer::lexIdentifierOrKeyword() {
 // Lex an integer or floating-point literal.
 // Lex decimal, binary, octal, hexadecimal, and floating literals.
 Token Lexer::lexNumber() {
-  beginToken();
 
   bool floating = false;
 
@@ -2410,7 +2429,6 @@ Token Lexer::lexNumber() {
 
 // Lex string literals with escape and UTF-8 validation.
 Token Lexer::lexString() {
-  beginToken();
 
   const std::size_t startOffset = tokenStart_.offset;
 
@@ -2505,7 +2523,6 @@ Token Lexer::lexString() {
 
 // Lex character literals with delimiter-aware recovery.
 Token Lexer::lexCharacter() {
-  beginToken();
 
   const std::size_t startOffset = tokenStart_.offset;
 
@@ -2628,7 +2645,6 @@ Token Lexer::lexCharacter() {
 
 // Lex hash-prefixed directives.
 Token Lexer::lexHashOrDirective() {
-  beginToken();
 
   consumeChar();
 
@@ -2662,7 +2678,6 @@ Token Lexer::lexHashOrDirective() {
 
 // Lex @ directives through keyword classification.
 Token Lexer::lexAtOrDirective() {
-  beginToken();
 
   consumeChar();
 
@@ -2691,7 +2706,6 @@ Token Lexer::lexAtOrDirective() {
 
 // Distinguish comments from slash-based operators.
 Token Lexer::lexCommentOrSlash() {
-  beginToken();
 
   if (detail::isPotentialComment(
           cursor_.current,
@@ -2725,7 +2739,6 @@ Token Lexer::lexCommentOrSlash() {
 
 // Lex operators and punctuation using direct character dispatch.
 Token Lexer::lexOperatorOrPunctuation() {
-  beginToken();
 
   const char* current = cursor_.current;
   const char* end = cursor_.end;
