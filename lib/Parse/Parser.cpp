@@ -8,6 +8,24 @@ namespace sift::parse {
 namespace {
 
 // Fast token-category predicates keep grammar dispatch branch-light.
+
+class DepthGuard final {
+public:
+  explicit DepthGuard(std::size_t& depth) noexcept : depth_(depth) {
+    ++depth_;
+  }
+
+  ~DepthGuard() {
+    --depth_;
+  }
+
+  DepthGuard(const DepthGuard&) = delete;
+  DepthGuard& operator=(const DepthGuard&) = delete;
+
+private:
+  std::size_t& depth_;
+};
+
 bool isDeclarationKeyword(TokenKind kind) noexcept {
   return kind == TokenKind::KeywordVar ||
          kind == TokenKind::KeywordConst ||
@@ -130,6 +148,21 @@ bool Parser::canContinue() const noexcept {
 
 bool Parser::canReturn() const noexcept {
   return functionDepth_ != 0;
+}
+
+bool Parser::enterExpression() {
+  if (expressionDepth_ >= maxExpressionDepth_) {
+    return false;
+  }
+
+  ++expressionDepth_;
+  return true;
+}
+
+void Parser::leaveExpression() noexcept {
+  if (expressionDepth_ != 0) {
+    --expressionDepth_;
+  }
 }
 
 bool Parser::check(TokenKind kind) const {
@@ -296,7 +329,7 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
   const Token start = current_;
   advance();
 
-  ++functionDepth_;
+  DepthGuard functionScope(functionDepth_);
 
   auto node = std::make_unique<FunctionDeclaration>();
   node->parameters.reserve(4);
@@ -340,7 +373,6 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
 
   node->body = parseBlock();
 
-  --functionDepth_;
   return node;
 }
 
@@ -464,9 +496,8 @@ std::unique_ptr<WhileStatement> Parser::parseWhile() {
   node->location = lexer_.locationAt(start.start);
   node->condition = parseExpression();
 
-  ++loopDepth_;
+  DepthGuard loopScope(loopDepth_);
   node->body = parseBlock();
-  --loopDepth_;
 
   return node;
 }
@@ -478,9 +509,8 @@ std::unique_ptr<RepeatStatement> Parser::parseRepeat() {
   auto node = std::make_unique<RepeatStatement>();
   node->location = lexer_.locationAt(start.start);
 
-  ++loopDepth_;
+  DepthGuard loopScope(loopDepth_);
   node->body = parseBlock();
-  --loopDepth_;
 
   if (match(TokenKind::KeywordWhile)) {
     node->condition = parseExpression();
@@ -506,9 +536,8 @@ std::unique_ptr<ForStatement> Parser::parseFor() {
 
   node->sequence = parseExpression();
 
-  ++loopDepth_;
+  DepthGuard loopScope(loopDepth_);
   node->body = parseBlock();
-  --loopDepth_;
 
   return node;
 }
@@ -588,7 +617,7 @@ std::unique_ptr<SwitchStatement> Parser::parseSwitch() {
 
   bool sawDefault = false;
   bool hasCase = false;
-  ++switchDepth_;
+  DepthGuard switchScope(switchDepth_);
 
   while (!check(TokenKind::RightBrace) && !check(TokenKind::EndOfFile)) {
     if (match(TokenKind::Semicolon) || match(TokenKind::Comment)) {
@@ -634,7 +663,6 @@ std::unique_ptr<SwitchStatement> Parser::parseSwitch() {
     error(start, "switch statement requires at least one case");
   }
 
-  --switchDepth_;
   return node;
 }
 
@@ -879,6 +907,11 @@ std::unique_ptr<Expression> Parser::parseFactor() {
 }
 
 std::unique_ptr<Expression> Parser::parseUnary() {
+  if (!enterExpression()) {
+    error(current_, "expression nesting exceeds parser limit");
+    return nullptr;
+  }
+
   if (isUnaryOperator(current_.kind)) {
     const Token operatorToken = current_;
     advance();
@@ -886,6 +919,7 @@ std::unique_ptr<Expression> Parser::parseUnary() {
     auto operand = parseUnary();
     if (!operand) {
       error(current_, "expected expression after unary operator");
+      leaveExpression();
       return nullptr;
     }
 
@@ -896,10 +930,13 @@ std::unique_ptr<Expression> Parser::parseUnary() {
     unary.op = operatorText(operatorToken.kind);
     unary.operand = std::move(operand);
     node->value = std::move(unary);
+    leaveExpression();
     return node;
   }
 
-  return parsePostfix();
+  auto expression = parsePostfix();
+  leaveExpression();
+  return expression;
 }
 
 // Postfix parsing is iterative so long member/call chains stay stack-safe.
