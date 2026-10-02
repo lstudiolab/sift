@@ -214,20 +214,11 @@ private:
         ++cursor_.offset;
       }
 
-      ++cursor_.line;
-      cursor_.column = 1;
       return '\n';
     }
 
     ++cursor_.current;
     ++cursor_.offset;
-
-    if (value == '\n') {
-      ++cursor_.line;
-      cursor_.column = 1;
-    } else {
-      ++cursor_.column;
-    }
 
     return value;
   }
