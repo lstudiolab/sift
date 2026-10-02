@@ -43,7 +43,7 @@ constexpr std::uint64_t fnv1a(std::string_view text) noexcept {
   return value;
 }
 
-constexpr std::array<KeywordEntry, 89> Keywords = {{
+constexpr std::array<KeywordEntry, 90> Keywords = {{
   {"var", TokenKind::KeywordVar, fnv1a("var")},
   {"const", TokenKind::KeywordConst, fnv1a("const")},
   {"function", TokenKind::KeywordFunction, fnv1a("function")},
@@ -156,7 +156,7 @@ struct KeywordBuckets {
 
 constexpr KeywordBuckets KeywordIndex{};
 
-static_assert(Keywords.size() == 89, "Sift keyword table changed without updating its declared size.");
+static_assert(Keywords.size() == 90, "Sift keyword table changed without updating its declared size.");
 
 constexpr bool isContinuationByte(unsigned char value) noexcept {
   return (value & 0xc0u) == 0x80u;
