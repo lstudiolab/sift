@@ -187,14 +187,19 @@ private:
   std::vector<Diagnostic> diagnostics_;
 
   inline char peekChar(std::size_t distance = 0) const noexcept {
-    const std::size_t remaining =
-        static_cast<std::size_t>(cursor_.end - cursor_.current);
+    const char* current = cursor_.current;
+    const char* end = cursor_.end;
 
-    if (distance >= remaining) {
+    if (distance == 0) {
+      return current < end ? *current : '\0';
+    }
+
+    if (current >= end ||
+        static_cast<std::size_t>(end - current) <= distance) {
       return '\0';
     }
 
-    return cursor_.current[distance];
+    return current[distance];
   }
 
   inline char consumeChar() noexcept {
