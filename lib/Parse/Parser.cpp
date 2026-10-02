@@ -26,7 +26,7 @@ bool isControlKeyword(TokenKind kind) noexcept {
 
 Parser::Parser(std::string_view source)
     : lexer_(source) {
-  diagnostics_.reserve(16);
+  diagnostics_.reserve(32);
   callingNames_.reserve(32);
   functionNames_.reserve(32);
   structNames_.reserve(16);
@@ -100,6 +100,10 @@ void Parser::synchronize() {
 
 std::unique_ptr<Program> Parser::parse() {
   auto program = std::make_unique<Program>();
+  program->imports.reserve(8);
+  program->structs.reserve(8);
+  program->functions.reserve(16);
+  program->statements.reserve(32);
   program->location = current_.kind == TokenKind::EndOfFile
       ? SourceLocation{}
       : lexer_.locationAt(current_.start);
@@ -183,6 +187,8 @@ std::unique_ptr<StructDeclaration> Parser::parseStruct() {
   advance();
 
   auto node = std::make_unique<StructDeclaration>();
+  node->variables.reserve(8);
+  node->functions.reserve(8);
   node->location = lexer_.locationAt(start.start);
   node->name = parseIdentifier("struct name");
 
@@ -233,6 +239,7 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
   advance();
 
   auto node = std::make_unique<FunctionDeclaration>();
+  node->parameters.reserve(4);
   node->location = lexer_.locationAt(start.start);
   node->name = parseIdentifier("function name");
 
@@ -479,6 +486,7 @@ std::unique_ptr<ExpressionStatement> Parser::parseExpressionStatement() {
 
 std::unique_ptr<Block> Parser::parseBlock() {
   auto node = std::make_unique<Block>();
+  node->statements.reserve(8);
   node->location = lexer_.locationAt(current_.start);
 
   if (!expect(TokenKind::LeftBrace, "expected '{' to begin block")) {
@@ -760,6 +768,7 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
       node->location = lexer_.locationAt(previous_.start);
 
       CallExpression call;
+      call.arguments.reserve(4);
       call.callee = std::move(expression);
 
       if (!check(TokenKind::RightParen)) {
@@ -879,27 +888,6 @@ std::string Parser::parseCallingName() {
 
 std::string Parser::tokenText(const Token& token) const {
   return std::string(token.text());
-}
-
-bool Parser::isExpressionStart(TokenKind kind) const noexcept {
-  return kind == TokenKind::Identifier ||
-         kind == TokenKind::CallingName ||
-         kind == TokenKind::IntegerLiteral ||
-         kind == TokenKind::FloatingLiteral ||
-         kind == TokenKind::StringLiteral ||
-         kind == TokenKind::CharacterLiteral ||
-         kind == TokenKind::KeywordTrue ||
-         kind == TokenKind::KeywordFalse ||
-         kind == TokenKind::LeftParen ||
-         kind == TokenKind::Bang ||
-         kind == TokenKind::Minus ||
-         kind == TokenKind::Plus;
-}
-
-bool Parser::isStatementStart(TokenKind kind) const noexcept {
-  return isDeclarationKeyword(kind) ||
-         isControlKeyword(kind) ||
-         isExpressionStart(kind);
 }
 
 bool Parser::isAssignmentOperator(TokenKind kind) const noexcept {
