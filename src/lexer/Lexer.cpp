@@ -1,8 +1,13 @@
 #include "sift/lexer/Lexer.h"
+#include "sift/lexer/Diagnostic.h"
+#include "sift/lexer/LexerCursor.h"
+#include "sift/lexer/LexerOptions.h"
+#include "sift/lexer/SourceLocation.h"
+#include "sift/lexer/Token.h"
+#include "sift/lexer/TokenKind.h"
 
 #include <array>
 #include <cstdint>
-#include <limits>
 #include <string_view>
 
 namespace sift::lexer {
