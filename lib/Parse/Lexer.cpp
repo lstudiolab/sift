@@ -243,6 +243,97 @@ inline bool keywordCandidateCanMatch(
   }
 
   return true;
+
+inline bool isHorizontalWhitespace(char value) noexcept {
+  return value == ' ' ||
+         value == '\t' ||
+         value == '\v' ||
+         value == '\f';
+}
+
+inline bool isLineBreakByte(char value) noexcept {
+  return value == '\n' ||
+         value == '\r';
+}
+
+inline bool isOperatorLeadByte(char value) noexcept {
+  return value == '=' ||
+         value == '!' ||
+         value == '+' ||
+         value == '-' ||
+         value == '*' ||
+         value == '%' ||
+         value == '<' ||
+         value == '>' ||
+         value == '&' ||
+         value == '|' ||
+         value == '~';
+}
+
+inline bool isPunctuationLeadByte(char value) noexcept {
+  return value == '(' ||
+         value == ')' ||
+         value == '{' ||
+         value == '}' ||
+         value == '[' ||
+         value == ']' ||
+         value == ',' ||
+         value == '.' ||
+         value == ':' ||
+         value == ';' ||
+         value == '?';
+}
+
+inline const char* scanAsciiIdentifier(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end) {
+    const unsigned char value =
+        static_cast<unsigned char>(*current);
+
+    if (value >= 0x80u) {
+      break;
+    }
+
+    if (!isAsciiIdentifierStart(
+            static_cast<char>(value)) &&
+        !(value >= '0' && value <= '9')) {
+      break;
+    }
+
+    ++current;
+  }
+
+  return current;
+}
+
+inline const char* scanHorizontalWhitespace(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end &&
+         isHorizontalWhitespace(*current)) {
+    ++current;
+  }
+
+  return current;
+}
+
+inline const char* scanUntilLineBreak(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end) {
+    const char value = *current;
+
+    if (value == '\n' ||
+        value == '\r') {
+      break;
+    }
+
+    ++current;
+  }
+
+  return current;
+}
 }
 
 } // namespace detail
@@ -451,17 +542,7 @@ void Lexer::recoverAfterLexicalError(
       break;
     }
 
-    if (value == '(' ||
-        value == ')' ||
-        value == '{' ||
-        value == '}' ||
-        value == '[' ||
-        value == ']' ||
-        value == ',' ||
-        value == '.' ||
-        value == ':' ||
-        value == ';' ||
-        value == '?') {
+    if (detail::isPunctuationLeadByte(value)) {
       break;
     }
 
@@ -471,17 +552,7 @@ void Lexer::recoverAfterLexicalError(
       break;
     }
 
-    if (value == '=' ||
-        value == '!' ||
-        value == '+' ||
-        value == '-' ||
-        value == '*' ||
-        value == '%' ||
-        value == '<' ||
-        value == '>' ||
-        value == '&' ||
-        value == '|' ||
-        value == '~') {
+    if (detail::isOperatorLeadByte(value)) {
       break;
     }
 
@@ -578,11 +649,18 @@ TokenKind Lexer::classifyKeyword(std::string_view text) noexcept {
   //
   // The operation intentionally proceeds in several explicit stages:
   //   1. reject impossible spellings;
-  //   2. calculate the stable compile-time-compatible hash;
-  //   3. select one of 256 buckets;
-  //   4. compare candidate lengths;
-  //   5. compare candidate hashes;
-  //   6. perform the final exact spelling comparison.
+  //   2. reject spellings that cannot be Sift keywords because they contain
+  //      non-ASCII bytes;
+  //   3. calculate the stable compile-time-compatible hash;
+  //   4. select one of 256 buckets;
+  //   5. compare candidate lengths;
+  //   6. compare candidate hashes;
+  //   7. perform the final exact spelling comparison.
+  //
+  // The lexer never constructs a temporary string, never inserts into a
+  // runtime map, and never scans the entire keyword table for an identifier.
+  // This keeps keyword recognition deterministic while leaving the common
+  // identifier path allocation-free.
   //
   // Keeping these stages explicit makes the hot path predictable and makes
   // the token-formation contract easy to audit.
@@ -961,32 +1039,19 @@ bool Lexer::isIdentifierContinue(char value) const noexcept {
 }
 
 void Lexer::consumeIdentifier() {
-  const char* current = cursor_.current;
+  const char* begin = cursor_.current;
 
-  while (current < cursor_.end) {
-    const unsigned char value =
-        static_cast<unsigned char>(*current);
-
-    if (value < 0x80u) {
-      if (!isAsciiIdentifierContinue(
-              static_cast<char>(value))) {
-        break;
-      }
-
-      ++current;
-      continue;
-    }
-
-    if (!options_.allowUnicodeIdentifiers) {
-      break;
-    }
-
-    break;
-  }
+  // The overwhelmingly common identifier path is ASCII. Scan it with raw
+  // pointers so the hot loop does not repeatedly call peekChar(), perform
+  // bounds calculations, or update source-location state one byte at a time.
+  const char* current =
+      scanAsciiIdentifier(
+          begin,
+          cursor_.end);
 
   const std::size_t asciiBytes =
       static_cast<std::size_t>(
-          current - cursor_.current);
+          current - begin);
 
   if (asciiBytes != 0) {
     cursor_.current = current;
@@ -994,6 +1059,9 @@ void Lexer::consumeIdentifier() {
     cursor_.column += asciiBytes;
   }
 
+  // Unicode is deliberately kept as a separate slow path. This preserves
+  // the fast ASCII path while retaining the language option for Unicode
+  // identifiers and the existing UTF-8 validation performed by lexing.
   if (current < cursor_.end &&
       static_cast<unsigned char>(*current) >= 0x80u &&
       options_.allowUnicodeIdentifiers) {
@@ -1015,8 +1083,43 @@ void Lexer::consumeUnicodeIdentifier() {
 }
 
 void Lexer::skipWhitespace() {
-  while (!atEnd()) {
-    const char value = peekChar();
+  for (;;) {
+    if (atEnd()) {
+      return;
+    }
+
+    // A BOM is valid only at the beginning of the source buffer. Handle it
+    // before the generic whitespace scan so it never becomes part of a token.
+    if (cursor_.offset == 0 &&
+        detail::startsBOM(
+            cursor_.current,
+            cursor_.end)) {
+      cursor_.current += 3;
+      cursor_.offset += 3;
+      cursor_.column += 3;
+      continue;
+    }
+
+    const char* begin =
+        cursor_.current;
+
+    const char* afterHorizontal =
+        detail::scanHorizontalWhitespace(
+            begin,
+            cursor_.end);
+
+    if (afterHorizontal != begin) {
+      const std::size_t consumed =
+          static_cast<std::size_t>(
+              afterHorizontal - begin);
+
+      cursor_.current = afterHorizontal;
+      cursor_.offset += consumed;
+      cursor_.column += consumed;
+      continue;
+    }
+
+    const char value = *cursor_.current;
 
     if (value == '\n' ||
         value == '\r') {
@@ -1028,34 +1131,26 @@ void Lexer::skipWhitespace() {
       continue;
     }
 
-    if (isAsciiSpace(value)) {
-      consumeChar();
-      continue;
-    }
-
-    if (cursor_.offset == 0 &&
-        detail::startsBOM(
-            cursor_.current,
-            cursor_.end)) {
-      cursor_.current += 3;
-      cursor_.offset += 3;
-      cursor_.column += 3;
-      continue;
-    }
-
-    break;
+    return;
   }
 }
 
 void Lexer::skipLineComment() {
-  while (!atEnd()) {
-    if (peekChar() == '\n' ||
-        peekChar() == '\r') {
-      break;
-    }
+  const char* begin =
+      cursor_.current;
 
-    consumeChar();
-  }
+  const char* end =
+      scanUntilLineBreak(
+          begin,
+          cursor_.end);
+
+  const std::size_t consumed =
+      static_cast<std::size_t>(
+          end - begin);
+
+  cursor_.current = end;
+  cursor_.offset += consumed;
+  cursor_.column += consumed;
 }
 
 void Lexer::skipBlockComment() {
