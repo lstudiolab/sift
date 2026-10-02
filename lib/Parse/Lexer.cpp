@@ -500,6 +500,34 @@ void Lexer::recoverMalformedToken() noexcept {
   recoverAfterLexicalError(true);
 }
 
+void Lexer::recoverStringLiteral() noexcept {
+  while (!atEnd()) {
+    const char value = peekChar();
+
+    if (value == '"' ||
+        value == '\n' ||
+        value == '\r') {
+      return;
+    }
+
+    consumeChar();
+  }
+}
+
+void Lexer::recoverCharacterLiteral() noexcept {
+  while (!atEnd()) {
+    const char value = peekChar();
+
+    if (value == '\'' ||
+        value == '\n' ||
+        value == '\r') {
+      return;
+    }
+
+    consumeChar();
+  }
+}
+
 bool Lexer::isAsciiSpace(char value) noexcept {
   return value == ' ' ||
          value == '\t' ||
@@ -1505,7 +1533,17 @@ Token Lexer::lexString() {
     if (peekChar() == '\\') {
       if (!consumeEscapeSequence()) {
         valid = false;
-        recoverAfterLexicalError(true);
+        recoverStringLiteral();
+
+        if (peekChar() == '"') {
+          consumeChar();
+          return finish(TokenKind::Unknown);
+        }
+
+        if (peekChar() == '\n' ||
+            peekChar() == '\r') {
+          return finish(TokenKind::Unknown);
+        }
       }
 
       continue;
