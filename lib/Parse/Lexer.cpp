@@ -1308,8 +1308,7 @@ void Lexer::recoverAfterLexicalError(
           mode) &&
       cursor_.current == start &&
       !atEnd()) {
-    detail::forceRecoveryProgress(
-        cursor_);
+    forceRecoveryProgress(cursor_);
   }
 }
 
@@ -1764,7 +1763,7 @@ void Lexer::consumeIdentifier() {
   // pointers so the hot loop does not repeatedly call peekChar(), perform
   // bounds calculations, or update source-location state one byte at a time.
   const char* current =
-      scanAsciiIdentifier(
+      detail::scanAsciiIdentifier(
           begin,
           cursor_.end);
 
@@ -1920,7 +1919,7 @@ void Lexer::skipLineComment() {
       cursor_.current;
 
   const char* end =
-      scanUntilLineBreak(
+      detail::scanUntilLineBreak(
           begin,
           cursor_.end);
 
