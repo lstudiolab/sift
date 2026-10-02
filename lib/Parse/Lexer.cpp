@@ -2313,6 +2313,17 @@ Token Lexer::lexNumber() {
       }
 
       consumeDigits(16);
+
+      if (isAsciiIdentifierContinue(peekChar())) {
+        addDiagnostic(
+            DiagnosticSeverity::Error,
+            location(),
+            "invalid character in hexadecimal literal");
+
+        recoverMalformedToken();
+        return finish(TokenKind::Unknown);
+      }
+
       return finish(TokenKind::IntegerLiteral);
     }
 
@@ -2332,6 +2343,17 @@ Token Lexer::lexNumber() {
       }
 
       consumeDigits(2);
+
+      if (isAsciiIdentifierContinue(peekChar())) {
+        addDiagnostic(
+            DiagnosticSeverity::Error,
+            location(),
+            "invalid character in binary literal");
+
+        recoverMalformedToken();
+        return finish(TokenKind::Unknown);
+      }
+
       return finish(TokenKind::IntegerLiteral);
     }
 
@@ -2351,6 +2373,17 @@ Token Lexer::lexNumber() {
       }
 
       consumeDigits(8);
+
+      if (isAsciiIdentifierContinue(peekChar())) {
+        addDiagnostic(
+            DiagnosticSeverity::Error,
+            location(),
+            "invalid character in octal literal");
+
+        recoverMalformedToken();
+        return finish(TokenKind::Unknown);
+      }
+
       return finish(TokenKind::IntegerLiteral);
     }
 
@@ -2465,6 +2498,19 @@ Token Lexer::lexString() {
     }
 
     if (runEnd != runStart) {
+      if (!validateUTF8(runStart, runEnd)) {
+        addDiagnostic(
+            DiagnosticSeverity::Error,
+            {
+                cursor_.offset,
+                cursor_.line,
+                cursor_.column
+            },
+            "invalid UTF-8 sequence in string literal");
+
+        valid = false;
+      }
+
       const std::size_t consumed =
           static_cast<std::size_t>(
               runEnd - runStart);
@@ -2518,16 +2564,80 @@ Token Lexer::lexCharacter() {
 
       return finish(TokenKind::Unknown);
     }
-  } else {
-    if (peekChar() == '\n') {
+  } else if (peekChar() == '\n' ||
+             peekChar() == '\r') {
+    addDiagnostic(
+        DiagnosticSeverity::Error,
+        start,
+        "newline is not allowed in a character literal");
+
+    return finish(TokenKind::Unknown);
+  } else if (static_cast<unsigned char>(peekChar()) >= 0x80u) {
+    const char* scalarStart = cursor_.current;
+    const unsigned char first =
+        static_cast<unsigned char>(*scalarStart);
+
+    unsigned width = 0;
+
+    if (first >= 0xc2u && first <= 0xdfu) {
+      width = 2;
+    } else if (first >= 0xe0u && first <= 0xefu) {
+      width = 3;
+    } else if (first >= 0xf0u && first <= 0xf4u) {
+      width = 4;
+    }
+
+    const std::size_t remaining =
+        static_cast<std::size_t>(
+            cursor_.end - scalarStart);
+
+    if (width == 0 || remaining < width) {
       addDiagnostic(
           DiagnosticSeverity::Error,
           start,
-          "newline is not allowed in a character literal");
+          "invalid UTF-8 sequence in character literal");
+
+      recoverCharacterLiteral();
+
+      if (peekChar() == '\'') {
+        consumeChar();
+      }
 
       return finish(TokenKind::Unknown);
     }
 
+    for (unsigned index = 1; index < width; ++index) {
+      if (!isContinuationByte(
+              static_cast<unsigned char>(
+                  scalarStart[index]))) {
+        addDiagnostic(
+            DiagnosticSeverity::Error,
+            start,
+            "invalid UTF-8 sequence in character literal");
+
+        recoverCharacterLiteral();
+
+        if (peekChar() == '\'') {
+          consumeChar();
+        }
+
+        return finish(TokenKind::Unknown);
+      }
+    }
+
+    cursor_.current += width;
+    cursor_.offset += width;
+    cursor_.column += width;
+
+    if (!validateUTF8(scalarStart, cursor_.current)) {
+      addDiagnostic(
+          DiagnosticSeverity::Error,
+          start,
+          "invalid UTF-8 sequence in character literal");
+
+      return finish(TokenKind::Unknown);
+    }
+  } else {
     consumeChar();
   }
 
