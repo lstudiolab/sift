@@ -137,16 +137,22 @@ std::unique_ptr<Program> Parser::parse() {
       }
 
       if (check(TokenKind::KeywordVar)) {
-        program->statements.push_back(
-            std::make_unique<Statement>(
-                Statement{*parseVariable(false)}));
+        {
+        auto declaration = parseVariable(false);
+        auto statement = std::make_unique<Statement>();
+        statement->value = std::move(*declaration);
+        program->statements.push_back(std::move(statement));
+      }
         continue;
       }
 
       if (check(TokenKind::KeywordConst)) {
-        program->statements.push_back(
-            std::make_unique<Statement>(
-                Statement{*parseVariable(true)}));
+        {
+        auto declaration = parseVariable(true);
+        auto statement = std::make_unique<Statement>();
+        statement->value = std::move(*declaration);
+        program->statements.push_back(std::move(statement));
+      }
         continue;
       }
 
@@ -284,65 +290,70 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
 std::unique_ptr<Statement> Parser::parseStatement() {
   if (check(TokenKind::KeywordVar)) {
     auto node = std::make_unique<Statement>();
-    node->value = *parseVariable(false);
+    node->value = std::move(*parseVariable(false));
     return node;
   }
 
   if (check(TokenKind::KeywordConst)) {
     auto node = std::make_unique<Statement>();
-    node->value = *parseVariable(true);
+    node->value = std::move(*parseVariable(true));
     return node;
   }
 
   if (check(TokenKind::KeywordIf)) {
     auto node = std::make_unique<Statement>();
-    node->value = *parseIf();
+    node->value = std::move(*parseIf());
     return node;
   }
 
   if (check(TokenKind::KeywordWhile)) {
     auto node = std::make_unique<Statement>();
-    node->value = *parseWhile();
+    node->value = std::move(*parseWhile());
     return node;
   }
 
   if (check(TokenKind::KeywordRepeat)) {
     auto node = std::make_unique<Statement>();
-    node->value = *parseRepeat();
+    node->value = std::move(*parseRepeat());
     return node;
   }
 
   if (check(TokenKind::KeywordFor)) {
     auto node = std::make_unique<Statement>();
-    node->value = *parseFor();
+    node->value = std::move(*parseFor());
     return node;
   }
 
   if (check(TokenKind::KeywordReturn)) {
     auto node = std::make_unique<Statement>();
-    node->value = *parseReturn();
+    node->value = std::move(*parseReturn());
     return node;
   }
 
   if (check(TokenKind::KeywordDefer)) {
     auto node = std::make_unique<Statement>();
-    node->value = *parseDefer();
+    node->value = std::move(*parseDefer());
     return node;
   }
 
   if (check(TokenKind::KeywordFunction)) {
     auto node = std::make_unique<Statement>();
-    node->value = *parseFunction();
+    node->value = std::move(*parseFunction());
     return node;
   }
 
   if (check(TokenKind::KeywordStruct)) {
     auto node = std::make_unique<Statement>();
-    node->value = *parseStruct();
+    node->value = std::move(*parseStruct());
     return node;
   }
 
-  return std::make_unique<Statement>(Statement{*parseExpressionStatement()});
+  {
+    auto expression = parseExpressionStatement();
+    auto statement = std::make_unique<Statement>();
+    statement->value = std::move(*expression);
+    return statement;
+  }
 }
 
 std::unique_ptr<VariableDeclaration> Parser::parseVariable(bool isConst) {
@@ -386,7 +397,7 @@ std::unique_ptr<IfStatement> Parser::parseIf() {
 
       auto nested = parseIf();
       auto statement = std::make_unique<Statement>();
-      statement->value = *nested;
+      statement->value = std::move(*nested);
       node->elseBlock->statements.push_back(
           std::move(statement));
     } else {
