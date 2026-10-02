@@ -357,7 +357,9 @@ private:
   std::size_t loopDepth_ = 0;
   std::size_t switchDepth_ = 0;
   std::size_t expressionDepth_ = 0;
+  std::size_t assignmentDepth_ = 0;
   static constexpr std::size_t maxExpressionDepth_ = 1024;
+  static constexpr std::size_t maxAssignmentDepth_ = 256;
 
   void advance();
   bool check(TokenKind kind) const;
@@ -366,6 +368,7 @@ private:
 
   void error(const Token& token, std::string_view message);
   void synchronize();
+  void synchronizeExpression();
 
   std::unique_ptr<ImportDeclaration> parseImport();
   std::unique_ptr<StructDeclaration> parseStruct();
@@ -389,6 +392,8 @@ private:
   bool canReturn() const noexcept;
   bool enterExpression();
   void leaveExpression() noexcept;
+  bool enterAssignment();
+  void leaveAssignment() noexcept;
 
   std::unique_ptr<Block> parseBlock();
   std::unique_ptr<Expression> parseExpression();
