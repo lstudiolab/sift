@@ -1884,115 +1884,130 @@ void Lexer::skipLineComment() {
 // Skip a nested block comment and diagnose unterminated input.
 void Lexer::skipBlockComment() {
   const SourceLocation start = location();
-
-  consumeChar();
-  consumeChar();
-
+  const char* current = cursor_.current + 2;
+  const char* end = cursor_.end;
   unsigned depth = 1;
 
-  while (!atEnd()) {
-    if (peekChar() == '/' &&
-        peekChar(1) == '*') {
-      consumeChar();
-      consumeChar();
+  cursor_.offset += 2;
+  cursor_.column += 2;
+
+  while (current < end) {
+    const char value = current[0];
+
+    if (value == '\n') {
+      ++current;
+      ++cursor_.offset;
+      ++cursor_.line;
+      cursor_.column = 1;
+      continue;
+    }
+
+    if (value == '\r') {
+      ++current;
+      ++cursor_.offset;
+      if (current < end && current[0] == '\n') {
+        ++current;
+        ++cursor_.offset;
+      }
+      ++cursor_.line;
+      cursor_.column = 1;
+      continue;
+    }
+
+    if (value == '/' && current + 1 < end && current[1] == '*') {
+      current += 2;
+      cursor_.offset += 2;
+      cursor_.column += 2;
       ++depth;
       continue;
     }
 
-    if (peekChar() == '*' &&
-        peekChar(1) == '/') {
-      consumeChar();
-      consumeChar();
-
+    if (value == '*' && current + 1 < end && current[1] == '/') {
+      current += 2;
+      cursor_.offset += 2;
+      cursor_.column += 2;
       --depth;
-
       if (depth == 0) {
+        cursor_.current = current;
         return;
       }
-
       continue;
     }
 
-    consumeChar();
+    const char* run = current;
+    do {
+      ++current;
+    } while (current < end && current[0] != '/' && current[0] != '*' && current[0] != '\n' && current[0] != '\r');
+
+    const std::size_t consumed = static_cast<std::size_t>(current - run);
+    cursor_.offset += consumed;
+    cursor_.column += consumed;
   }
 
-  addDiagnostic(
-      DiagnosticSeverity::Error,
-      start,
-      "unterminated block comment");
-
-  // EOF is already the safest synchronization point for an unterminated
-  // block comment. The important recovery property is that the lexer returns
-  // a comment token instead of throwing or entering another scan loop.
+  cursor_.current = current;
+  addDiagnostic(DiagnosticSeverity::Error, start, "unterminated block comment");
 }
 
 // Consume digits for an integer or floating-point component.
 void Lexer::consumeDigits(unsigned base) {
-  bool sawDigit = false;
-  bool previousWasSeparator = false;
-  bool separatorErrorReported = false;
+  const char* begin = cursor_.current;
+  const char* current = begin;
 
-  const auto isDigitForBase = [base](char value) noexcept {
+  auto isDigitForBase = [base](char value) noexcept {
     switch (base) {
-      case 2:
-        return isBinaryDigit(value);
-      case 8:
-        return isOctalDigit(value);
-      case 10:
-        return isDecimalDigit(value);
-      case 16:
-        return isHexDigit(value);
-      default:
-        return false;
+      case 2: return isBinaryDigit(value);
+      case 8: return isOctalDigit(value);
+      case 10: return isDecimalDigit(value);
+      case 16: return isHexDigit(value);
+      default: return false;
     }
   };
 
-  while (!atEnd()) {
-    const char value = peekChar();
+  bool sawDigit = false;
+  bool sawSeparator = false;
+  bool invalidSeparator = false;
+  std::size_t separatorOffset = 0;
 
+  while (current < cursor_.end) {
+    const char value = *current;
     if (isDigitForBase(value)) {
-      consumeChar();
-
       sawDigit = true;
-      previousWasSeparator = false;
-      separatorErrorReported = false;
-
+      ++current;
       continue;
     }
-
-    if (value == '_') {
-      const char next = peekChar(1);
-
-      const bool separatorIsInvalid =
-          !sawDigit ||
-          previousWasSeparator ||
-          !isDigitForBase(next);
-
-      if (separatorIsInvalid &&
-          !separatorErrorReported) {
-        addDiagnostic(
-            DiagnosticSeverity::Error,
-            location(),
-            "invalid numeric separator");
-
-        separatorErrorReported = true;
-      }
-
-      consumeChar();
-
-      previousWasSeparator = true;
-
-      continue;
+    if (value != '_') {
+      break;
     }
 
-    break;
+    sawSeparator = true;
+    const bool previousValid = sawDigit && current > begin && current[-1] != '_';
+    const bool nextValid = current + 1 < cursor_.end && isDigitForBase(current[1]);
+
+    if ((!previousValid || !nextValid) && !invalidSeparator) {
+      invalidSeparator = true;
+      separatorOffset = static_cast<std::size_t>(current - begin);
+    }
+    ++current;
   }
 
-  if (previousWasSeparator &&
-      !separatorErrorReported) {
+  const std::size_t consumed = static_cast<std::size_t>(current - begin);
+  cursor_.current = current;
+  cursor_.offset += consumed;
+  cursor_.column += consumed;
+
+  if (invalidSeparator) {
     addDiagnostic(
         DiagnosticSeverity::Error,
-        location(),
+        {tokenStart_.offset + separatorOffset,
+         tokenStart_.line,
+         tokenStart_.column + separatorOffset},
+        "invalid numeric separator");
+  } else if (sawSeparator && current > begin && current[-1] == '_') {
+    addDiagnostic(
+        DiagnosticSeverity::Error,
+        {cursor_.offset - 1,
+         cursor_.line,
+         cursor_.column - 1},
         "numeric literal cannot end with a separator");
   }
 }
@@ -2721,197 +2736,62 @@ Token Lexer::lexCommentOrSlash() {
 Token Lexer::lexOperatorOrPunctuation() {
   beginToken();
 
-  switch (peekChar()) {
-    case '(':
-      consumeChar();
-      return finish(TokenKind::LeftParen);
+  const char* current = cursor_.current;
+  const char* end = cursor_.end;
+  const char first = current[0];
+  const char second = current + 1 < end ? current[1] : '\0';
 
-    case ')':
-      consumeChar();
-      return finish(TokenKind::RightParen);
+  auto advance = [this, current](std::size_t count) noexcept {
+    cursor_.current = current + count;
+    cursor_.offset += count;
+    cursor_.column += count;
+  };
 
-    case '{':
-      consumeChar();
-      return finish(TokenKind::LeftBrace);
-
-    case '}':
-      consumeChar();
-      return finish(TokenKind::RightBrace);
-
-    case '[':
-      consumeChar();
-      return finish(TokenKind::LeftBracket);
-
-    case ']':
-      consumeChar();
-      return finish(TokenKind::RightBracket);
-
-    case ',':
-      consumeChar();
-      return finish(TokenKind::Comma);
-
-    case '.':
-      consumeChar();
-      return finish(TokenKind::Dot);
-
-    case ':':
-      consumeChar();
-      return finish(TokenKind::Colon);
-
-    case ';':
-      consumeChar();
-      return finish(TokenKind::Semicolon);
-
-    case '?':
-      consumeChar();
-      return finish(TokenKind::Question);
-
-    // Lex assignment and equality.
-    case '=':
-      consumeChar();
-
-      if (peekChar() == '=') {
-        consumeChar();
-        return finish(TokenKind::EqualEqual);
-      }
-
-      return finish(TokenKind::Equal);
-
-    // Lex negation and inequality.
-    case '!':
-      consumeChar();
-
-      if (peekChar() == '=') {
-        consumeChar();
-        return finish(TokenKind::BangEqual);
-      }
-
-      return finish(TokenKind::Bang);
-
-    // Lex addition and compound assignment.
+  switch (first) {
+    case '(': advance(1); return finish(TokenKind::LeftParen);
+    case ')': advance(1); return finish(TokenKind::RightParen);
+    case '{': advance(1); return finish(TokenKind::LeftBrace);
+    case '}': advance(1); return finish(TokenKind::RightBrace);
+    case '[': advance(1); return finish(TokenKind::LeftBracket);
+    case ']': advance(1); return finish(TokenKind::RightBracket);
+    case ',': advance(1); return finish(TokenKind::Comma);
+    case '.': advance(1); return finish(TokenKind::Dot);
+    case ':': advance(1); return finish(TokenKind::Colon);
+    case ';': advance(1); return finish(TokenKind::Semicolon);
+    case '?': advance(1); return finish(TokenKind::Question);
+    case '=': advance(second == '=' ? 2 : 1); return finish(second == '=' ? TokenKind::EqualEqual : TokenKind::Equal);
+    case '!': advance(second == '=' ? 2 : 1); return finish(second == '=' ? TokenKind::BangEqual : TokenKind::Bang);
     case '+':
-      consumeChar();
-
-      if (peekChar() == '=') {
-        consumeChar();
-        return finish(TokenKind::PlusEqual);
-      }
-
-      if (peekChar() == '+') {
-        consumeChar();
-        return finish(TokenKind::PlusPlus);
-      }
-
-      return finish(TokenKind::Plus);
-
-    // Lex subtraction, decrement, and arrows.
+      if (second == '=') { advance(2); return finish(TokenKind::PlusEqual); }
+      if (second == '+') { advance(2); return finish(TokenKind::PlusPlus); }
+      advance(1); return finish(TokenKind::Plus);
     case '-':
-      consumeChar();
-
-      if (peekChar() == '=') {
-        consumeChar();
-        return finish(TokenKind::MinusEqual);
-      }
-
-      if (peekChar() == '-') {
-        consumeChar();
-        return finish(TokenKind::MinusMinus);
-      }
-
-      if (peekChar() == '>') {
-        consumeChar();
-        return finish(TokenKind::Arrow);
-      }
-
-      return finish(TokenKind::Minus);
-
-    // Lex multiplication and compound assignment.
-    case '*':
-      consumeChar();
-
-      if (consumeIf('=')) {
-        return finish(TokenKind::StarEqual);
-      }
-
-      return finish(TokenKind::Star);
-
-    // Lex remainder and compound assignment.
-    case '%':
-      consumeChar();
-
-      if (consumeIf('=')) {
-        return finish(TokenKind::PercentEqual);
-      }
-
-      return finish(TokenKind::Percent);
-
-    // Lex less-than comparisons.
-    case '<':
-      consumeChar();
-
-      if (consumeIf('=')) {
-        return finish(TokenKind::LessEqual);
-      }
-
-      return finish(TokenKind::Less);
-
-    // Lex greater-than comparisons.
-    case '>':
-      consumeChar();
-
-      if (consumeIf('=')) {
-        return finish(TokenKind::GreaterEqual);
-      }
-
-      return finish(TokenKind::Greater);
-
-    // Lex logical conjunction.
+      if (second == '=') { advance(2); return finish(TokenKind::MinusEqual); }
+      if (second == '-') { advance(2); return finish(TokenKind::MinusMinus); }
+      if (second == '>') { advance(2); return finish(TokenKind::Arrow); }
+      advance(1); return finish(TokenKind::Minus);
+    case '*': advance(second == '=' ? 2 : 1); return finish(second == '=' ? TokenKind::StarEqual : TokenKind::Star);
+    case '%': advance(second == '=' ? 2 : 1); return finish(second == '=' ? TokenKind::PercentEqual : TokenKind::Percent);
+    case '<': advance(second == '=' ? 2 : 1); return finish(second == '=' ? TokenKind::LessEqual : TokenKind::Less);
+    case '>': advance(second == '=' ? 2 : 1); return finish(second == '=' ? TokenKind::GreaterEqual : TokenKind::Greater);
     case '&':
-      consumeChar();
-
-      if (consumeIf('&')) {
-        return finish(TokenKind::AndAnd);
-      }
-
+      if (second == '&') { advance(2); return finish(TokenKind::AndAnd); }
       break;
-
-    // Lex logical disjunction.
     case '|':
-      consumeChar();
-
-      if (consumeIf('|')) {
-        return finish(TokenKind::OrOr);
-      }
-
+      if (second == '|') { advance(2); return finish(TokenKind::OrOr); }
       break;
-
-    // Lex pattern matching.
     case '~':
-      consumeChar();
-
-      if (consumeIf('=')) {
-        return finish(TokenKind::TildeEqual);
-      }
-
-      return finish(TokenKind::Tilde);
-
+      if (second == '=') { advance(2); return finish(TokenKind::TildeEqual); }
+      advance(1); return finish(TokenKind::Tilde);
     default:
-      // Consume the offending byte so the lexer always makes progress.
-      consumeChar();
       break;
   }
 
+  consumeChar();
   addDiagnostic(
       DiagnosticSeverity::Error,
-      {
-          tokenStart_.offset,
-          tokenStart_.line,
-          tokenStart_.column
-      },
+      {tokenStart_.offset, tokenStart_.line, tokenStart_.column},
       "unrecognized Sift character");
-
-  // The offending byte has already been consumed. Do not scan past the
-  // next token just because the current character is unsupported.
   return finish(TokenKind::Unknown);
 }
 
