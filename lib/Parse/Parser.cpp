@@ -25,6 +25,29 @@ bool isControlKeyword(TokenKind kind) noexcept {
          kind == TokenKind::KeywordContinue;
 }
 
+// Expression-property helpers used by syntax validation.  Keeping these
+// independent of allocation details makes them cheap and easy to inline.
+bool isAssignableExpression(const Expression* expression) noexcept {
+  if (expression == nullptr) return false;
+  return expression->kind() == NodeKind::IdentifierExpression ||
+         expression->kind() == NodeKind::MemberExpression;
+}
+
+bool isLiteralExpression(const Expression* expression) noexcept {
+  return expression != nullptr &&
+         expression->kind() == NodeKind::LiteralExpression;
+}
+
+bool isMemberExpression(const Expression* expression) noexcept {
+  return expression != nullptr &&
+         expression->kind() == NodeKind::MemberExpression;
+}
+
+bool isIdentifierExpression(const Expression* expression) noexcept {
+  return expression != nullptr &&
+         expression->kind() == NodeKind::IdentifierExpression;
+}
+
 } // namespace
 
 Parser::Parser(std::string_view source)
@@ -321,6 +344,11 @@ std::unique_ptr<VariableDeclaration> Parser::parseVariable(bool isConst) {
   node->isConst = isConst;
   node->name = parseIdentifier(isConst ? "const name" : "var name");
 
+  if (node->name.empty()) {
+    synchronize();
+    return node;
+  }
+
   if (match(TokenKind::Colon)) {
     node->type = parseTypeName();
   }
@@ -331,6 +359,10 @@ std::unique_ptr<VariableDeclaration> Parser::parseVariable(bool isConst) {
 
   if (!node->initializer && node->type.empty()) {
     error(current_, "variable declaration requires a type or initializer");
+  }
+
+  if (isConst && !node->initializer) {
+    error(current_, "const declaration requires an initializer");
   }
 
   match(TokenKind::Semicolon);
@@ -564,6 +596,11 @@ std::unique_ptr<Expression> Parser::parseAssignment() {
     return left;
   }
 
+  if (!isAssignableExpression(left.get())) {
+    error(operatorToken,
+          "left side of assignment must be an identifier or member expression");
+  }
+
   auto node = std::make_unique<Expression>();
   node->location = lexer_.locationAt(operatorToken.start);
 
@@ -575,6 +612,8 @@ std::unique_ptr<Expression> Parser::parseAssignment() {
   return node;
 }
 
+// Logical OR is the lowest binary precedence level in the current grammar.
+// Parsing it separately preserves short-circuit grouping for later lowering.
 std::unique_ptr<Expression> Parser::parseLogicalOr() {
   auto left = parseLogicalAnd();
 
@@ -601,6 +640,8 @@ std::unique_ptr<Expression> Parser::parseLogicalOr() {
   return left;
 }
 
+// Logical AND binds more tightly than OR but less tightly than equality.
+// The loop keeps long boolean expressions iterative instead of recursive.
 std::unique_ptr<Expression> Parser::parseLogicalAnd() {
   auto left = parseEquality();
 
@@ -627,6 +668,8 @@ std::unique_ptr<Expression> Parser::parseLogicalAnd() {
   return left;
 }
 
+// Equality operators share one precedence level.  The parser keeps their
+// original spelling in the AST so later stages can apply Sift semantics.
 std::unique_ptr<Expression> Parser::parseEquality() {
   auto left = parseComparison();
 
@@ -656,6 +699,8 @@ std::unique_ptr<Expression> Parser::parseEquality() {
   return left;
 }
 
+// Relational operators are folded from left to right at comparison level.
+// Semantic analysis can later validate any chained comparison restrictions.
 std::unique_ptr<Expression> Parser::parseComparison() {
   auto left = parseTerm();
 
@@ -686,6 +731,8 @@ std::unique_ptr<Expression> Parser::parseComparison() {
   return left;
 }
 
+// Addition and subtraction are parsed iteratively.  This avoids recursive
+// stack growth for generated expressions containing many terms.
 std::unique_ptr<Expression> Parser::parseTerm() {
   auto left = parseFactor();
 
@@ -714,6 +761,8 @@ std::unique_ptr<Expression> Parser::parseTerm() {
   return left;
 }
 
+// Multiplicative operators bind tighter than addition and subtraction.
+// Keeping this loop iterative is important for long arithmetic expressions.
 std::unique_ptr<Expression> Parser::parseFactor() {
   auto left = parseUnary();
 
@@ -743,6 +792,8 @@ std::unique_ptr<Expression> Parser::parseFactor() {
   return left;
 }
 
+// Unary operators associate from the outside inward, so this level is
+// naturally recursive while postfix parsing remains iterative.
 std::unique_ptr<Expression> Parser::parseUnary() {
   if (check(TokenKind::Bang) ||
       check(TokenKind::Minus) ||
@@ -866,6 +917,8 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
   return nullptr;
 }
 
+// Type names are stored as complete spellings, including qualified names.
+// Semantic analysis can resolve that spelling without reparsing tokens.
 std::string Parser::parseTypeName() {
   if (current_.kind == TokenKind::Identifier ||
       current_.kind == TokenKind::KeywordInt ||
@@ -896,6 +949,8 @@ std::string Parser::parseTypeName() {
   return {};
 }
 
+// Declaration names are parsed through one routine so diagnostics and token
+// consumption stay consistent across all declaration kinds.
 std::string Parser::parseIdentifier(std::string_view context) {
   if (!current_.isIdentifier()) {
     error(current_, std::string("expected ") + std::string(context));
@@ -907,6 +962,8 @@ std::string Parser::parseIdentifier(std::string_view context) {
   return value;
 }
 
+// A Sift function has exactly one calling name inside its parentheses.
+// Duplicate calling-name detection is handled by the declaration parser.
 std::string Parser::parseCallingName() {
   if (current_.kind != TokenKind::CallingName &&
       current_.kind != TokenKind::Identifier) {
@@ -919,6 +976,17 @@ std::string Parser::parseCallingName() {
   return value;
 }
 
+// Parser recovery is token-based rather than character-based.  Once a
+// production fails, synchronize() advances to a declaration, control-flow
+// boundary, semicolon, closing brace, or EOF.  This keeps later diagnostics
+// useful without rescanning the source from the beginning.
+//
+// Returning partial AST nodes after recoverable errors is intentional.  Tools
+// such as syntax inspection can still consume the tree while the compiler
+// checks hasErrors() before attempting code generation.
+//
+// Token text is copied into AST-owned strings because lexer token views refer
+// to the parser source buffer.  The AST must own its names independently.
 std::string Parser::tokenText(const Token& token) const {
   return std::string(token.text());
 }
