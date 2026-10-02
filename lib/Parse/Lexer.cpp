@@ -1449,7 +1449,8 @@ TokenKind Lexer::classifyKeyword(std::string_view text) noexcept {
   // Keeping these stages explicit makes the hot path predictable and makes
   // the token-formation contract easy to audit.
 
-  if (!detail::keywordCandidateCanMatch(text)) {
+  if (text.empty() ||
+      text.size() > 16u) {
     return TokenKind::Identifier;
   }
 
