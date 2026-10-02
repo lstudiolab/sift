@@ -269,6 +269,7 @@ void Lexer::reset() noexcept {
   tokenStart_ = cursor_;
 
   lookahead_ = {};
+  lookaheadDiagnostics_.clear();
   hasLookahead_ = false;
 
   expectingCallingName_ = false;
@@ -1790,6 +1791,17 @@ Token Lexer::handleIdentifierContext(Token token) noexcept {
   return token;
 }
 
+void Lexer::commitLookaheadDiagnostics() {
+  if (lookaheadDiagnostics_.empty()) {
+    return;
+  }
+
+  diagnostics_.insert(
+      diagnostics_.end(),
+      lookaheadDiagnostics_.begin(),
+      lookaheadDiagnostics_.end());
+}
+
 void Lexer::updateContext(
     TokenKind kind,
     std::string_view text) noexcept {
@@ -1952,8 +1964,11 @@ Token Lexer::lex() {
   if (hasLookahead_) {
     Token result = lookahead_;
 
+    commitLookaheadDiagnostics();
+
     hasLookahead_ = false;
     lookahead_ = {};
+    lookaheadDiagnostics_.clear();
 
     updateContext(
         result.kind,
@@ -1979,11 +1994,20 @@ Token Lexer::peek() {
   Token speculativeToken =
       lexImpl();
 
-  restoreState(savedState);
-
   if (diagnostics_.size() > savedDiagnosticCount) {
-    diagnostics_.resize(savedDiagnosticCount);
+    lookaheadDiagnostics_.assign(
+        diagnostics_.begin() +
+            static_cast<std::ptrdiff_t>(
+                savedDiagnosticCount),
+        diagnostics_.end());
+
+    diagnostics_.resize(
+        savedDiagnosticCount);
+  } else {
+    lookaheadDiagnostics_.clear();
   }
+
+  restoreState(savedState);
 
   lookahead_ = speculativeToken;
   hasLookahead_ = true;
