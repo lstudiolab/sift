@@ -1117,13 +1117,13 @@ SourceLocation Lexer::location() const noexcept {
   for (const char* current = begin;
        current < target;
        ++current) {
-    if (*current == '\\n') {
+    if (*current == '\n') {
       ++line;
       lineStart = static_cast<std::size_t>(current + 1 - begin);
-    } else if (*current == '\\r') {
+    } else if (*current == '\r') {
       ++line;
       lineStart = static_cast<std::size_t>(current + 1 - begin);
-      if (current + 1 < target && current[1] == '\\n') {
+      if (current + 1 < target && current[1] == '\n') {
         ++current;
         lineStart = static_cast<std::size_t>(current + 1 - begin);
       }
@@ -1749,13 +1749,18 @@ void Lexer::consumeUnicodeIdentifier() {
         static_cast<unsigned char>(*cursor_.current);
 
     if (first < 0x80u) {
-      if (!isAsciiIdentifierContinue(
-              static_cast<char>(first))) {
+      const char* asciiEnd =
+          detail::scanAsciiIdentifier(
+              cursor_.current,
+              cursor_.end);
+
+      if (asciiEnd == cursor_.current) {
         break;
       }
 
-      ++cursor_.current;
-      ++cursor_.offset;
+      cursor_.offset += static_cast<std::size_t>(
+          asciiEnd - cursor_.current);
+      cursor_.current = asciiEnd;
       continue;
     }
 
@@ -2805,51 +2810,55 @@ void Lexer::updateContext(
     std::string_view text) noexcept {
   (void)text;
 
-  if (kind == TokenKind::KeywordFunction) {
-    afterFunctionKeyword_ = true;
-    sawFunctionName_ = false;
-    expectingCallingName_ = false;
-    lastWasDot_ = false;
-    return;
+  switch (kind) {
+    case TokenKind::KeywordFunction:
+      afterFunctionKeyword_ = true;
+      sawFunctionName_ = false;
+      expectingCallingName_ = false;
+      lastWasDot_ = false;
+      return;
+
+    case TokenKind::Identifier:
+      if (afterFunctionKeyword_ && !sawFunctionName_) {
+        sawFunctionName_ = true;
+        return;
+      }
+
+      if (lastWasDot_) {
+        lastWasDot_ = false;
+      }
+
+      if (expectingCallingName_) {
+        expectingCallingName_ = false;
+      }
+      return;
+
+    case TokenKind::LeftParen:
+      if (afterFunctionKeyword_ && sawFunctionName_) {
+        expectingCallingName_ = true;
+        afterFunctionKeyword_ = false;
+        return;
+      }
+      break;
+
+    case TokenKind::Dot:
+      lastWasDot_ = true;
+      return;
+
+    case TokenKind::Comment:
+    case TokenKind::Newline:
+      return;
+
+    default:
+      break;
   }
 
-  if (afterFunctionKeyword_ &&
-      !sawFunctionName_ &&
-      kind == TokenKind::Identifier) {
-    sawFunctionName_ = true;
-    return;
-  }
-
-  if (afterFunctionKeyword_ &&
-      sawFunctionName_ &&
-      kind == TokenKind::LeftParen) {
-    expectingCallingName_ = true;
+  if (afterFunctionKeyword_) {
     afterFunctionKeyword_ = false;
-    return;
-  }
-
-  if (afterFunctionKeyword_ &&
-      kind != TokenKind::Comment &&
-      kind != TokenKind::Newline) {
-    afterFunctionKeyword_ = false;
     sawFunctionName_ = false;
   }
 
-  if (kind == TokenKind::Dot) {
-    lastWasDot_ = true;
-    return;
-  }
-
-  if (lastWasDot_ &&
-      kind == TokenKind::Identifier) {
-    lastWasDot_ = false;
-    return;
-  }
-
-  if (kind != TokenKind::Comment &&
-      kind != TokenKind::Newline) {
-    lastWasDot_ = false;
-  }
+  lastWasDot_ = false;
 }
 
 // Save state before speculative lexing.
