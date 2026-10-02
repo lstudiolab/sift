@@ -1,11 +1,13 @@
 #include "sift/Parse/Parser.h"
 
 #include <utility>
+#include <limits>
 
 namespace sift::parse {
 
 namespace {
 
+// Fast token-category predicates keep grammar dispatch branch-light.
 bool isDeclarationKeyword(TokenKind kind) noexcept {
   return kind == TokenKind::KeywordVar ||
          kind == TokenKind::KeywordConst ||
@@ -25,8 +27,6 @@ bool isControlKeyword(TokenKind kind) noexcept {
          kind == TokenKind::KeywordContinue;
 }
 
-// Expression-property helpers used by syntax validation.  Keeping these
-// independent of allocation details makes them cheap and easy to inline.
 bool isAssignableExpression(const Expression* expression) noexcept {
   if (expression == nullptr) return false;
   return expression->kind() == NodeKind::IdentifierExpression ||
@@ -179,6 +179,7 @@ void Parser::synchronize() {
   }
 }
 
+// Parse the translation unit without recursive top-level descent.
 std::unique_ptr<Program> Parser::parse() {
   auto program = std::make_unique<Program>();
   program->imports.reserve(8);
@@ -661,9 +662,17 @@ std::unique_ptr<Block> Parser::parseBlock() {
       continue;
     }
 
+    const Token before = current_;
     auto statement = parseStatement();
+
     if (statement) {
       node->statements.push_back(std::move(statement));
+    }
+
+    if (current_.start == before.start &&
+        current_.kind == before.kind) {
+      error(current_, "parser made no progress while parsing a block");
+      advance();
     }
   }
 
@@ -675,6 +684,7 @@ std::unique_ptr<Expression> Parser::parseExpression() {
   return parseAssignment();
 }
 
+// Assignment is right-associative and is the only expression level that recurses.
 std::unique_ptr<Expression> Parser::parseAssignment() {
   auto left = parseLogicalOr();
 
@@ -697,11 +707,6 @@ std::unique_ptr<Expression> Parser::parseAssignment() {
           "left side of assignment must be an identifier or member expression");
   }
 
-  if (!isAssignableExpression(left.get())) {
-    error(operatorToken,
-          "left side of assignment must be an identifier or member expression");
-  }
-
   auto node = std::make_unique<Expression>();
   node->location = lexer_.locationAt(operatorToken.start);
 
@@ -713,8 +718,6 @@ std::unique_ptr<Expression> Parser::parseAssignment() {
   return node;
 }
 
-// Logical OR is the lowest binary precedence level in the current grammar.
-// Parsing it separately preserves short-circuit grouping for later lowering.
 std::unique_ptr<Expression> Parser::parseLogicalOr() {
   auto left = parseLogicalAnd();
 
@@ -741,8 +744,6 @@ std::unique_ptr<Expression> Parser::parseLogicalOr() {
   return left;
 }
 
-// Logical AND binds more tightly than OR but less tightly than equality.
-// The loop keeps long boolean expressions iterative instead of recursive.
 std::unique_ptr<Expression> Parser::parseLogicalAnd() {
   auto left = parseEquality();
 
@@ -769,8 +770,6 @@ std::unique_ptr<Expression> Parser::parseLogicalAnd() {
   return left;
 }
 
-// Equality operators share one precedence level.  The parser keeps their
-// original spelling in the AST so later stages can apply Sift semantics.
 std::unique_ptr<Expression> Parser::parseEquality() {
   auto left = parseComparison();
 
@@ -798,8 +797,6 @@ std::unique_ptr<Expression> Parser::parseEquality() {
   return left;
 }
 
-// Relational operators are folded from left to right at comparison level.
-// Semantic analysis can later validate any chained comparison restrictions.
 std::unique_ptr<Expression> Parser::parseComparison() {
   auto left = parseTerm();
 
@@ -827,8 +824,6 @@ std::unique_ptr<Expression> Parser::parseComparison() {
   return left;
 }
 
-// Addition and subtraction are parsed iteratively.  This avoids recursive
-// stack growth for generated expressions containing many terms.
 std::unique_ptr<Expression> Parser::parseTerm() {
   auto left = parseFactor();
 
@@ -856,8 +851,6 @@ std::unique_ptr<Expression> Parser::parseTerm() {
   return left;
 }
 
-// Multiplicative operators bind tighter than addition and subtraction.
-// Keeping this loop iterative is important for long arithmetic expressions.
 std::unique_ptr<Expression> Parser::parseFactor() {
   auto left = parseUnary();
 
@@ -885,8 +878,6 @@ std::unique_ptr<Expression> Parser::parseFactor() {
   return left;
 }
 
-// Unary operators associate from the outside inward, so this level is
-// naturally recursive while postfix parsing remains iterative.
 std::unique_ptr<Expression> Parser::parseUnary() {
   if (isUnaryOperator(current_.kind)) {
     const Token operatorToken = current_;
@@ -911,6 +902,7 @@ std::unique_ptr<Expression> Parser::parseUnary() {
   return parsePostfix();
 }
 
+// Postfix parsing is iterative so long member/call chains stay stack-safe.
 std::unique_ptr<Expression> Parser::parsePostfix() {
   auto expression = parsePrimary();
 
@@ -1006,8 +998,6 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
   return nullptr;
 }
 
-// Type names are stored as complete spellings, including qualified names.
-// Semantic analysis can resolve that spelling without reparsing tokens.
 std::string Parser::parseTypeName() {
   if (isTypeToken(current_.kind)) {
     std::string type = tokenText(current_);
@@ -1031,8 +1021,6 @@ std::string Parser::parseTypeName() {
   return {};
 }
 
-// Declaration names are parsed through one routine so diagnostics and token
-// consumption stay consistent across all declaration kinds.
 std::string Parser::parseIdentifier(std::string_view context) {
   if (!current_.isIdentifier()) {
     error(current_, std::string("expected ") + std::string(context));
@@ -1044,8 +1032,6 @@ std::string Parser::parseIdentifier(std::string_view context) {
   return value;
 }
 
-// A Sift function has exactly one calling name inside its parentheses.
-// Duplicate calling-name detection is handled by the declaration parser.
 std::string Parser::parseCallingName() {
   if (current_.kind != TokenKind::CallingName &&
       current_.kind != TokenKind::Identifier) {
@@ -1058,243 +1044,7 @@ std::string Parser::parseCallingName() {
   return value;
 }
 
-// ---------------------------------------------------------------------------
-// Parser implementation notes
-// ---------------------------------------------------------------------------
-//
-// The parser owns the grammar boundary between lexical tokens and the AST.
-// Lexer is responsible for characters, token spelling, source offsets, and
-// token categories. Parser is responsible for ordering those tokens into
-// valid declarations, statements, blocks, and expressions.
-//
-// The parser deliberately does not perform semantic name lookup or type
-// checking. Those operations belong to later compiler stages. Keeping this
-// boundary small makes parser recovery predictable and keeps semantic rules
-// from being duplicated in two places.
-//
-// Token ownership
-// ---------------
-// Lexer token text is a view into the original source. AST names are copied
-// into std::string fields because the AST must own the information it exposes.
-// This is particularly important when compiler tools retain an AST after the
-// lexer object has moved on to another source file.
-//
-// Token movement
-// --------------
-// current_ is always the next unconsumed token. previous_ is the token most
-// recently consumed. advance() is the single operation that moves this pair.
-// match() builds an optional production around advance(), while expect()
-// reports an error when a required production is missing.
-//
-// This invariant is used throughout the parser. Code that needs to inspect
-// syntax should normally use check() without consuming input. Code that needs
-// to consume optional syntax should use match(). Required syntax uses expect().
-//
-// Diagnostics
-// -----------
-// Diagnostics are ordinary compiler results rather than exceptions. Invalid
-// source code is expected input, so the parser should not pay exception costs
-// merely to report a normal syntax error. error() records the source location
-// and owned diagnostic message and then allows the caller to recover.
-//
-// Recovery
-// --------
-// synchronize() advances through damaged input until a structural boundary.
-// Semicolons and closing braces provide natural statement boundaries, while
-// declaration and control keywords provide useful restart points.
-//
-// Recovery is intentionally conservative. The parser should never guess a
-// missing expression or declaration and silently construct a different AST.
-// It is better to preserve the known portion of the tree and report the
-// exact missing construct than to invent syntax.
-//
-// Declaration namespaces
-// ----------------------
-// Function names, calling names, and struct names use independent hash sets.
-// These sets are populated during parsing, so duplicate declarations are
-// diagnosed at the point where the duplicate is introduced.
-//
-// The hash sets use string_view values referring to source-owned text. This
-// avoids allocating another copy of every declaration name solely for the
-// duplicate check.
-//
-// Function calling-name rule
-// --------------------------
-// Sift functions have exactly one calling name inside their parentheses.
-// parseCallingName() recognizes that name. parseFunction() enforces the
-// uniqueness rule across the file and diagnoses a second comma-separated
-// calling name instead of interpreting it as a parameter.
-//
-// Function context
-// ----------------
-// functionDepth_ records whether parsing is currently inside a function.
-// This allows return statements to be validated syntactically without
-// introducing semantic analysis into the parser.
-//
-// A function increments the context before its body is parsed and restores
-// the surrounding value after the body. Nested function declarations can
-// therefore be diagnosed consistently if the grammar is expanded later.
-//
-// Struct rules
-// ------------
-// Sift structs currently contain var, const, and function declarations.
-// Nested structs are rejected while parsing the containing struct. This is a
-// structural language rule and is therefore appropriate for the parser.
-//
-// Struct member vectors reserve a small common capacity. Large structs still
-// grow normally, but typical declarations avoid several early reallocations.
-//
-// Variable and const declarations
-// -------------------------------
-// var and const share one parser production. The boolean passed to
-// parseVariable() selects whether the resulting node represents a mutable
-// variable or constant declaration.
-//
-// A variable needs either an explicit type or an initializer. const also
-// requires an initializer because the current AST has no separate deferred
-// initialization state.
-//
-// Control-flow context
-// --------------------
-// loopDepth_ is active while parsing while, repeat, and for bodies.
-// switchDepth_ is active while parsing a switch body. These counters are
-// parser context rather than AST state and disappear after the construct.
-//
-// break can target either a loop or a switch. continue can target only a
-// loop. A switch nested inside a loop does not erase the enclosing loop
-// context, so continue remains legal in that situation.
-//
-// Blocks
-// ------
-// parseBlock() is shared by functions and control-flow statements. It owns
-// the statement vector and is the central location for skipping comments and
-// empty semicolon statements.
-//
-// The block parser also contains a progress guard. Every successful statement
-// parser is expected to consume at least one token. If malformed future
-// syntax violates that contract, the guard consumes one token and emits a
-// diagnostic instead of entering an infinite loop.
-//
-// Switch statements
-// -----------------
-// A switch owns one subject expression and an ordered sequence of SwitchCase
-// nodes. Each case owns its condition and block. The existing lexer token
-// KeywordDefat is used for the language's default case spelling.
-//
-// The parser rejects duplicate default cases and requires at least one case
-// or default arm. Semantic checks such as duplicate constant case values can
-// be performed later when constant evaluation is available.
-//
-// Expression parser
-// -----------------
-// Expression parsing is split into explicit precedence levels. Assignment is
-// the outermost level and is right associative. The remaining binary levels
-// fold left to right.
-//
-// The order is assignment, logical OR, logical AND, equality, comparison,
-// term, factor, unary, postfix, and primary. This produces the expected tree
-// for mixed arithmetic and logical expressions without a separate precedence
-// rewrite pass.
-//
-// Assignment
-// ----------
-// Assignment first parses the complete left expression. The parser then
-// verifies that the result is an identifier or member expression before
-// constructing AssignmentExpression.
-//
-// This is a syntax-level assignability check. Mutability, access control,
-// property setters, and type compatibility remain semantic responsibilities.
-//
-// Logical operators
-// -----------------
-// OR and AND have separate parser levels so their relative precedence is
-// represented directly in the AST. Their loops are iterative, which avoids
-// recursion proportional to the number of consecutive boolean operators.
-//
-// Equality and comparison
-// -----------------------
-// Equality recognizes the equality family exposed by the lexer. Comparison
-// recognizes less-than and greater-than variants. Operator spellings are
-// retained in the BinaryExpression so later phases do not need source text.
-//
-// Arithmetic
-// ----------
-// Term handles addition and subtraction. Factor handles multiplication,
-// division, and remainder. Both levels are iterative and construct binary
-// nodes as each operator is consumed.
-//
-// Unary operators
-// ---------------
-// Unary parsing is recursive because consecutive unary operators naturally
-// form nested expressions. The lexer already supplies token kinds for the
-// supported unary forms, including error and panic operations.
-//
-// Postfix expressions
-// -------------------
-// Member access and function calls are parsed by one iterative loop. This is
-// important for Sift's dot notation because long chains should not consume
-// one recursive parser frame per member access.
-//
-// A call stores the complete callee expression. Therefore a direct call and a
-// member call use the same CallExpression representation, leaving name
-// resolution to semantic analysis.
-//
-// Primary expressions
-// -------------------
-// Primary expressions are the leaves of the expression tree: identifiers,
-// calling names, literals, and parenthesized expressions. Parentheses affect
-// grouping but do not need a dedicated AST node.
-//
-// Type names
-// ----------
-// Type names accept the built-in type tokens already defined by Lexer as well
-// as ordinary identifiers. Qualified types use the same dot notation as
-// other names and are stored as one owned spelling.
-//
-// Performance
-// -----------
-// Parser hot paths avoid exceptions, repeated source scans, and redundant
-// token-category chains. Small token predicates make the precedence loops
-// easier for the optimizer to inline and easier for humans to maintain.
-//
-// AST allocations are not artificially removed. Every AST node represents
-// real compiler state and must have a clear owner. Changing allocation
-// strategy would be a separate architectural optimization rather than a
-// reason to introduce fake code here.
-//
-// Maintenance
-// -----------
-// When Lexer gains a token with grammar meaning, Parser should either consume
-// that token in an explicit production or produce an intentional diagnostic.
-// A new keyword must never silently fall through as an ordinary identifier
-// unless that behavior is part of the language specification.
-//
-// ---------------------------------------------------------------------------
-//
-//// Parser recovery is token-based rather than character-based.  Once a
-// production fails, synchronize() advances to a declaration, control-flow
-// boundary, semicolon, closing brace, or EOF.  This keeps later diagnostics
-// useful without rescanning the source from the beginning.
-//
-// Returning partial AST nodes after recoverable errors is intentional.  Tools
-// such as syntax inspection can still consume the tree while the compiler
-// checks hasErrors() before attempting code generation.
-//
-// Token text is copied into AST-owned strings because lexer token views refer
-// to the parser source buffer.  The AST must own its names independently.
-//
-// This ownership boundary is especially important for compiler tooling that
-// keeps an AST after lexical analysis has completed.  Parser nodes therefore
-// never retain temporary lexer storage for names or operator spellings.
-//
-// The parser also avoids storing redundant source offsets in each expression.
-// Every AST node already has a SourceLocation, while the lexer remains the
-// authoritative source-location calculator.
-//
-// Keeping these responsibilities separated makes later parser optimization
-// possible without changing the semantic representation consumed downstream.
-//
-// End of parser implementation helpers.
+// Token spelling is copied only when it becomes AST-owned state.
 std::string Parser::tokenText(const Token& token) const {
   return std::string(token.text());
 }
