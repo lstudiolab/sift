@@ -317,6 +317,19 @@ inline const char* scanAsciiIdentifier(
     }
 
     ++current;
+  }
+
+  return current;
+}
+
+inline const char* scanHorizontalWhitespace(
+    const char* current,
+    const char* end) noexcept {
+  while (current < end &&
+         isHorizontalWhitespace(*current)) {
+    ++current;
+  }
+
   return current;
 }
 
