@@ -1,7 +1,6 @@
 #include "sift/Parse/Parser.h"
 
 #include <utility>
-#include <limits>
 
 namespace sift::parse {
 
@@ -49,21 +48,6 @@ bool isAssignableExpression(const Expression* expression) noexcept {
   if (expression == nullptr) return false;
   return expression->kind() == NodeKind::IdentifierExpression ||
          expression->kind() == NodeKind::MemberExpression;
-}
-
-bool isLiteralExpression(const Expression* expression) noexcept {
-  return expression != nullptr &&
-         expression->kind() == NodeKind::LiteralExpression;
-}
-
-bool isMemberExpression(const Expression* expression) noexcept {
-  return expression != nullptr &&
-         expression->kind() == NodeKind::MemberExpression;
-}
-
-bool isIdentifierExpression(const Expression* expression) noexcept {
-  return expression != nullptr &&
-         expression->kind() == NodeKind::IdentifierExpression;
 }
 
 bool isTypeToken(TokenKind kind) noexcept {
@@ -189,6 +173,18 @@ bool Parser::expect(TokenKind kind, std::string_view message) {
 }
 
 void Parser::error(const Token& token, std::string_view message) {
+  if (diagnostics_.size() >= maxDiagnostics_) {
+    if (!diagnosticsTruncated_) {
+      diagnosticsTruncated_ = true;
+      diagnostics_.push_back({
+          DiagnosticSeverity::Error,
+          lexer_.locationAt(token.start),
+          "too many parser errors; further diagnostics suppressed"
+      });
+    }
+    return;
+  }
+
   diagnostics_.push_back({
       DiagnosticSeverity::Error,
       lexer_.locationAt(token.start),
