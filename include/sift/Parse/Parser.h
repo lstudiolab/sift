@@ -353,6 +353,8 @@ private:
   std::size_t functionDepth_ = 0;
   std::size_t loopDepth_ = 0;
   std::size_t switchDepth_ = 0;
+  std::size_t expressionDepth_ = 0;
+  static constexpr std::size_t maxExpressionDepth_ = 1024;
 
   void advance();
   bool check(TokenKind kind) const;
@@ -382,6 +384,8 @@ private:
   bool canBreak() const noexcept;
   bool canContinue() const noexcept;
   bool canReturn() const noexcept;
+  bool enterExpression();
+  void leaveExpression() noexcept;
 
   std::unique_ptr<Block> parseBlock();
   std::unique_ptr<Expression> parseExpression();
