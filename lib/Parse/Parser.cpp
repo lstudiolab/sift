@@ -120,6 +120,18 @@ void Parser::advance() {
   current_ = lexer_.lex();
 }
 
+bool Parser::canBreak() const noexcept {
+  return loopDepth_ != 0 || switchDepth_ != 0;
+}
+
+bool Parser::canContinue() const noexcept {
+  return loopDepth_ != 0;
+}
+
+bool Parser::canReturn() const noexcept {
+  return functionDepth_ != 0;
+}
+
 bool Parser::check(TokenKind kind) const {
   return current_.kind == kind;
 }
@@ -283,6 +295,8 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
   const Token start = current_;
   advance();
 
+  ++functionDepth_;
+
   auto node = std::make_unique<FunctionDeclaration>();
   node->parameters.reserve(4);
   node->location = lexer_.locationAt(start.start);
@@ -324,6 +338,8 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
   }
 
   node->body = parseBlock();
+
+  --functionDepth_;
   return node;
 }
 
@@ -446,7 +462,11 @@ std::unique_ptr<WhileStatement> Parser::parseWhile() {
   auto node = std::make_unique<WhileStatement>();
   node->location = lexer_.locationAt(start.start);
   node->condition = parseExpression();
+
+  ++loopDepth_;
   node->body = parseBlock();
+  --loopDepth_;
+
   return node;
 }
 
@@ -456,7 +476,10 @@ std::unique_ptr<RepeatStatement> Parser::parseRepeat() {
 
   auto node = std::make_unique<RepeatStatement>();
   node->location = lexer_.locationAt(start.start);
+
+  ++loopDepth_;
   node->body = parseBlock();
+  --loopDepth_;
 
   if (match(TokenKind::KeywordWhile)) {
     node->condition = parseExpression();
@@ -481,7 +504,11 @@ std::unique_ptr<ForStatement> Parser::parseFor() {
   }
 
   node->sequence = parseExpression();
+
+  ++loopDepth_;
   node->body = parseBlock();
+  --loopDepth_;
+
   return node;
 }
 
@@ -491,6 +518,10 @@ std::unique_ptr<ReturnStatement> Parser::parseReturn() {
 
   auto node = std::make_unique<ReturnStatement>();
   node->location = lexer_.locationAt(start.start);
+
+  if (!canReturn()) {
+    error(start, "'return' is only valid inside a function");
+  }
 
   if (!check(TokenKind::RightBrace) &&
       !check(TokenKind::Semicolon) &&
@@ -518,6 +549,10 @@ std::unique_ptr<BreakStatement> Parser::parseBreak() {
 
   auto node = std::make_unique<BreakStatement>();
   node->location = lexer_.locationAt(start.start);
+
+  if (!canBreak()) {
+    error(start, "'break' is only valid inside a loop or switch");
+  }
   match(TokenKind::Semicolon);
   return node;
 }
@@ -528,6 +563,10 @@ std::unique_ptr<ContinueStatement> Parser::parseContinue() {
 
   auto node = std::make_unique<ContinueStatement>();
   node->location = lexer_.locationAt(start.start);
+
+  if (!canContinue()) {
+    error(start, "'continue' is only valid inside a loop");
+  }
   match(TokenKind::Semicolon);
   return node;
 }
@@ -581,6 +620,12 @@ std::unique_ptr<SwitchStatement> Parser::parseSwitch() {
   }
 
   expect(TokenKind::RightBrace, "expected '}' after switch statement");
+
+  if (!hasCase && !hasDefault) {
+    error(start, "switch statement requires at least one case");
+  }
+
+  --switchDepth_;
   return node;
 }
 
