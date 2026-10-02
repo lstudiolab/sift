@@ -430,6 +430,76 @@ void Lexer::addDiagnostic(
   });
 }
 
+void Lexer::recoverAfterLexicalError(
+    bool stopAtLineBreak) noexcept {
+  const char* recoveryStart = cursor_.current;
+
+  while (!atEnd()) {
+    const char value = peekChar();
+
+    if (value == '\n' ||
+        value == '\r') {
+      if (stopAtLineBreak) {
+        break;
+      }
+
+      consumeChar();
+      continue;
+    }
+
+    if (isAsciiSpace(value)) {
+      break;
+    }
+
+    if (value == '(' ||
+        value == ')' ||
+        value == '{' ||
+        value == '}' ||
+        value == '[' ||
+        value == ']' ||
+        value == ',' ||
+        value == '.' ||
+        value == ':' ||
+        value == ';' ||
+        value == '?') {
+      break;
+    }
+
+    if (value == '/' &&
+        (peekChar(1) == '/' ||
+         peekChar(1) == '*')) {
+      break;
+    }
+
+    if (value == '=' ||
+        value == '!' ||
+        value == '+' ||
+        value == '-' ||
+        value == '*' ||
+        value == '%' ||
+        value == '<' ||
+        value == '>' ||
+        value == '&' ||
+        value == '|' ||
+        value == '~') {
+      break;
+    }
+
+    consumeChar();
+  }
+
+  if (cursor_.current == recoveryStart &&
+      !atEnd() &&
+      peekChar() != '\n' &&
+      peekChar() != '\r') {
+    consumeChar();
+  }
+}
+
+void Lexer::recoverMalformedToken() noexcept {
+  recoverAfterLexicalError(true);
+}
+
 bool Lexer::isAsciiSpace(char value) noexcept {
   return value == ' ' ||
          value == '\t' ||
@@ -998,6 +1068,10 @@ void Lexer::skipBlockComment() {
       DiagnosticSeverity::Error,
       start,
       "unterminated block comment");
+
+  // EOF is already the safest synchronization point for an unterminated
+  // block comment. The important recovery property is that the lexer returns
+  // a comment token instead of throwing or entering another scan loop.
 }
 
 void Lexer::consumeDigits(unsigned base) {
@@ -1269,6 +1343,8 @@ Token Lexer::lexIdentifierOrKeyword() {
         },
         "invalid UTF-8 sequence in identifier");
 
+    recoverMalformedToken();
+
     return finish(TokenKind::Unknown);
   }
 
@@ -1312,6 +1388,7 @@ Token Lexer::lexNumber() {
             location(),
             "hexadecimal literal requires hexadecimal digits");
 
+        recoverMalformedToken();
         return finish(TokenKind::Unknown);
       }
 
@@ -1330,6 +1407,7 @@ Token Lexer::lexNumber() {
             location(),
             "binary literal requires binary digits");
 
+        recoverMalformedToken();
         return finish(TokenKind::Unknown);
       }
 
@@ -1348,6 +1426,7 @@ Token Lexer::lexNumber() {
             location(),
             "octal literal requires octal digits");
 
+        recoverMalformedToken();
         return finish(TokenKind::Unknown);
       }
 
@@ -1385,6 +1464,7 @@ Token Lexer::lexNumber() {
           location(),
           "exponent requires decimal digits");
 
+      recoverMalformedToken();
       return finish(TokenKind::Unknown);
     }
 
@@ -1409,18 +1489,30 @@ Token Lexer::lexString() {
 
   consumeChar();
 
+  bool valid = true;
+
   while (!atEnd()) {
     if (peekChar() == '"') {
       consumeChar();
-      return finish(TokenKind::StringLiteral);
+
+      if (valid) {
+        return finish(TokenKind::StringLiteral);
+      }
+
+      return finish(TokenKind::Unknown);
     }
 
     if (peekChar() == '\\') {
-      consumeEscapeSequence();
+      if (!consumeEscapeSequence()) {
+        valid = false;
+        recoverAfterLexicalError(true);
+      }
+
       continue;
     }
 
-    if (peekChar() == '\n') {
+    if (peekChar() == '\n' ||
+        peekChar() == '\r') {
       addDiagnostic(
           DiagnosticSeverity::Error,
           start,
@@ -1776,7 +1868,7 @@ Token Lexer::lexOperatorOrPunctuation() {
       },
       "unrecognized Sift character");
 
-  consumeChar();
+  recoverMalformedToken();
 
   return finish(TokenKind::Unknown);
 }
