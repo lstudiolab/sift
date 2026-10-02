@@ -1744,6 +1744,8 @@ void Lexer::consumeIdentifier() {
 
 // Consume UTF-8 identifier scalars while continuing through following ASCII.
 void Lexer::consumeUnicodeIdentifier() {
+  identifierContainsNonASCII_ = true;
+
   while (!atEnd()) {
     const unsigned char first =
         static_cast<unsigned char>(*cursor_.current);
@@ -2251,7 +2253,7 @@ Token Lexer::lexNumber() {
             location(),
             "hexadecimal literal requires hexadecimal digits");
 
-        recoverMalformedToken();
+        recoverAfterLexicalError(false);
         return finish(TokenKind::Unknown);
       }
 
@@ -2365,6 +2367,16 @@ Token Lexer::lexNumber() {
     }
 
     consumeDigits(10);
+  }
+
+  if (isAsciiIdentifierContinue(peekChar())) {
+    addDiagnostic(
+        DiagnosticSeverity::Error,
+        locationAt(cursor_.offset),
+        "invalid character in numeric literal");
+
+    recoverMalformedToken();
+    return finish(TokenKind::Unknown);
   }
 
   if (floating) {
