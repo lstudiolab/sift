@@ -586,6 +586,9 @@ std::unique_ptr<SwitchStatement> Parser::parseSwitch() {
   }
 
   bool sawDefault = false;
+  bool hasCase = false;
+  ++switchDepth_;
+
   while (!check(TokenKind::RightBrace) && !check(TokenKind::EndOfFile)) {
     if (match(TokenKind::Semicolon) || match(TokenKind::Comment)) {
       continue;
@@ -612,7 +615,12 @@ std::unique_ptr<SwitchStatement> Parser::parseSwitch() {
       }
       sawDefault = true;
     } else {
+      hasCase = true;
       caseNode->condition = parseExpression();
+
+      if (!caseNode->condition) {
+        error(caseStart, "expected a case expression");
+      }
     }
 
     caseNode->body = parseBlock();
