@@ -927,8 +927,6 @@ inline bool consumeRecoveryRange(
         ++cursor.offset;
       }
 
-      ++cursor.line;
-      cursor.column = 1;
       continue;
     }
 
@@ -966,8 +964,7 @@ inline bool forceRecoveryProgress(
   ++cursor.offset;
 
   if (value == '\n') {
-  } else {
-    ++cursor.column;
+    return true;
   }
 
   return true;
@@ -2283,7 +2280,7 @@ Token Lexer::lexNumber() {
             location(),
             "binary literal requires binary digits");
 
-        recoverMalformedToken();
+        recoverAfterLexicalError(false);
         return finish(TokenKind::Unknown);
       }
 
@@ -2295,7 +2292,7 @@ Token Lexer::lexNumber() {
             location(),
             "invalid character in binary literal");
 
-        recoverMalformedToken();
+        recoverAfterLexicalError(false);
         return finish(TokenKind::Unknown);
       }
 
@@ -2391,7 +2388,7 @@ Token Lexer::lexNumber() {
 Token Lexer::lexString() {
   beginToken();
 
-  const const SourceLocation start =
+  const SourceLocation start =
       locationAt(tokenStart_.offset);
 
   consumeChar();
