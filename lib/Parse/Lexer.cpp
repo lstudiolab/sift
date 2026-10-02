@@ -32,19 +32,7 @@ struct KeywordEntry {
   TokenKind kind;
 };
 
-// Hash a keyword spelling for fast deterministic lookup.
-constexpr std::uint64_t fnv1a(std::string_view text) noexcept {
-  std::uint64_t value = 14695981039346656037ull;
-
-  for (unsigned char character : text) {
-    value ^= static_cast<std::uint64_t>(character);
-    value *= 1099511628211ull;
-  }
-
-  return value;
-}
-
-constexpr std::array<KeywordEntry, 89> Keywords = {{
+constexpr std::array<KeywordEntry, 90> Keywords = {{
   {"var", TokenKind::KeywordVar},
   {"const", TokenKind::KeywordConst},
   {"function", TokenKind::KeywordFunction},
@@ -134,7 +122,7 @@ constexpr std::array<KeywordEntry, 89> Keywords = {{
   {"output", TokenKind::KeywordOutput},
   {"delete", TokenKind::KeywordDelete},
   {"destroy", TokenKind::KeywordDestroy},
-  {"panic", TokenKind::KeywordPanic, fnv1a("panic")}
+  {"panic", TokenKind::KeywordPanic}
 }};
 
 struct KeywordBuckets {
@@ -157,7 +145,7 @@ struct KeywordBuckets {
 
 constexpr KeywordBuckets KeywordIndex{};
 
-static_assert(Keywords.size() == 89, "Sift keyword table changed without updating its declared size.");
+static_assert(Keywords.size() == 90, "Sift keyword table changed without updating its declared size.");
 
 // Check whether a byte continues a UTF-8 scalar.
 constexpr bool isContinuationByte(unsigned char value) noexcept {
@@ -1108,6 +1096,7 @@ void Lexer::reset() noexcept {
   tokenStart_ = cursor_;
 
   lookahead_ = {};
+  lookaheadState_ = saveState();
   lookaheadDiagnostics_.clear();
   hasLookahead_ = false;
 
@@ -1318,7 +1307,7 @@ void Lexer::recoverAfterLexicalError(
           mode) &&
       cursor_.current == start &&
       !atEnd()) {
-    forceRecoveryAdvance(
+    detail::forceRecoveryProgress(
         cursor_);
   }
 }
@@ -1361,6 +1350,11 @@ void Lexer::recoverCharacterLiteral() noexcept {
   }
 }
 
+constexpr bool isValidUnicodeScalar(std::uint32_t value) noexcept {
+  return value <= 0x10ffffu &&
+         !(value >= 0xd800u && value <= 0xdfffu);
+}
+
 bool Lexer::isAsciiSpace(char value) noexcept {
   return value == ' ' ||
          value == '\t' ||
@@ -1398,11 +1392,6 @@ unsigned Lexer::hexValue(char value) noexcept {
   }
 
   return static_cast<unsigned>(value - 'A' + 10);
-}
-
-// Compute the deterministic hash used for keyword classification.
-std::uint64_t Lexer::keywordHash(std::string_view text) noexcept {
-  return fnv1a(text);
 }
 
 TokenKind Lexer::classifyKeyword(std::string_view text) noexcept {
@@ -1798,17 +1787,75 @@ void Lexer::consumeIdentifier() {
   }
 }
 
-// Consume an identifier containing UTF-8 characters.
+// Consume UTF-8 identifier scalars while continuing through following ASCII.
 void Lexer::consumeUnicodeIdentifier() {
   while (!atEnd()) {
-    const unsigned char value =
-        static_cast<unsigned char>(peekChar());
+    const unsigned char first =
+        static_cast<unsigned char>(*cursor_.current);
 
-    if (value < 0x80u) {
+    if (first < 0x80u) {
+      if (!isAsciiIdentifierContinue(
+              static_cast<char>(first))) {
+        break;
+      }
+
+      ++cursor_.current;
+      ++cursor_.offset;
+      ++cursor_.column;
+      continue;
+    }
+
+    unsigned width = 0;
+
+    if (first >= 0xc2u && first <= 0xdfu) {
+      width = 2;
+    } else if (first >= 0xe0u && first <= 0xefu) {
+      width = 3;
+    } else if (first >= 0xf0u && first <= 0xf4u) {
+      width = 4;
+    } else {
+      ++cursor_.current;
+      ++cursor_.offset;
+      ++cursor_.column;
+      continue;
+    }
+
+    const std::size_t remaining =
+        static_cast<std::size_t>(
+            cursor_.end - cursor_.current);
+
+    if (remaining < width) {
+      while (!atEnd() &&
+             static_cast<unsigned char>(
+                 *cursor_.current) >= 0x80u) {
+        ++cursor_.current;
+        ++cursor_.offset;
+        ++cursor_.column;
+      }
       break;
     }
 
-    consumeChar();
+    bool valid = true;
+
+    for (unsigned index = 1; index < width; ++index) {
+      if (!isContinuationByte(
+              static_cast<unsigned char>(
+                  cursor_.current[index]))) {
+        valid = false;
+        break;
+      }
+    }
+
+    if (!valid) {
+      ++cursor_.current;
+      ++cursor_.offset;
+      ++cursor_.column;
+      continue;
+    }
+
+    cursor_.current += width;
+    cursor_.offset += width;
+    cursor_.column += width;
   }
 }
 
@@ -2984,15 +3031,13 @@ Token Lexer::lex() {
   if (hasLookahead_) {
     Token result = lookahead_;
 
+    restoreState(lookaheadState_);
     commitLookaheadDiagnostics();
 
     hasLookahead_ = false;
     lookahead_ = {};
+    lookaheadState_ = saveState();
     lookaheadDiagnostics_.clear();
-
-    updateContext(
-        result.kind,
-        result.text);
 
     return result;
   }
@@ -3016,6 +3061,9 @@ Token Lexer::peek() {
   Token speculativeToken =
       lexImpl();
 
+  const LexState advancedState =
+      saveState();
+
   if (diagnostics_.size() > savedDiagnosticCount) {
     lookaheadDiagnostics_.assign(
         diagnostics_.begin() +
@@ -3032,6 +3080,7 @@ Token Lexer::peek() {
   restoreState(savedState);
 
   lookahead_ = speculativeToken;
+  lookaheadState_ = advancedState;
   hasLookahead_ = true;
 
   return lookahead_;
@@ -3048,134 +3097,4 @@ Token Lexer::lexCallingName() {
 
   return token;
 }
-// Recover a malformed escape sequence without consuming the next token.
-inline const char* recoveryEscapeTail(const char* current, const char* end) noexcept {
-  if (current >= end) return end;
-  if (*current == 92) ++current;
-  if (current >= end) return current;
-  const char value = *current;
-  if (value == 'n' || value == 'r' || value == 't' || value == '0') return current + 1;
-  if (value == 'b' || value == 'f' || value == 'v') return current + 1;
-  if (value == 92 || value == 34 || value == 39) return current + 1;
-  if (value == 'x') {
-    ++current;
-    for (unsigned index = 0; index < 2 && current < end; ++index) {
-      if (!isHexDigit(*current)) break;
-      ++current;
-    }
-    return current;
-  }
-  if (value == 'u') {
-    ++current;
-    for (unsigned index = 0; index < 4 && current < end; ++index) {
-      if (!isHexDigit(*current)) break;
-      ++current;
-    }
-    return current;
-  }
-  return current + 1;
-}
-
-// Recover malformed numeric separators and exponent tails.
-inline const char* recoveryNumberTail(const char* current, const char* end) noexcept {
-  bool separator = false;
-  bool digit = false;
-  while (current < end) {
-    const char value = *current;
-    if (isDecimalDigit(value)) {
-      digit = true;
-      separator = false;
-      ++current;
-      continue;
-    }
-    if (value == '_' && !separator) {
-      separator = true;
-      ++current;
-      continue;
-    }
-    if (value == '.' && digit) {
-      ++current;
-      while (current < end && isDecimalDigit(*current)) ++current;
-      continue;
-    }
-    if ((value == 'e' || value == 'E') && digit) {
-      ++current;
-      if (current < end && (*current == '+' || *current == '-')) ++current;
-      while (current < end && isDecimalDigit(*current)) ++current;
-      continue;
-    }
-    break;
-  }
-  return current;
-}
-
-// Recover mismatched delimiters while preserving the next synchronization point.
-inline const char* recoveryDelimiterTail(const char* current, const char* end) noexcept {
-  unsigned paren = 0;
-  unsigned bracket = 0;
-  unsigned brace = 0;
-  while (current < end) {
-    const char value = *current;
-    if (value == '(') { ++paren; ++current; continue; }
-    if (value == '[') { ++bracket; ++current; continue; }
-    if (value == '{') { ++brace; ++current; continue; }
-    if (value == ')' && paren != 0) { --paren; ++current; continue; }
-    if (value == ']' && bracket != 0) { --bracket; ++current; continue; }
-    if (value == '}' && brace != 0) { --brace; ++current; continue; }
-    if ((value == ')' || value == ']' || value == '}') &&
-        paren == 0 && bracket == 0 && brace == 0) return current;
-    if (value == ';' && paren == 0 && bracket == 0 && brace == 0) return current;
-    if (value == '\n' || value == '\r') return current;
-    ++current;
-  }
-  return end;
-}
-
-// Recover a damaged directive suffix without swallowing a following directive.
-inline const char* recoveryDirectiveTail(const char* current, const char* end) noexcept {
-  while (current < end) {
-    const char value = *current;
-    if (value == '@' || value == '#') return current;
-    if (value == ';' || value == '}' || value == '{') return current;
-    if (value == '\n' || value == '\r') return current;
-    if (value == ' ' || value == '\t') return current;
-    ++current;
-  }
-  return end;
-}
-
-// Recover a malformed operator suffix without crossing a comment boundary.
-inline const char* recoveryOperatorTail(const char* current, const char* end) noexcept {
-  while (current < end) {
-    const char value = *current;
-    if (value == '=' || value == '!' || value == '+' || value == '-' ||
-        value == '*' || value == '%' || value == '<' || value == '>' ||
-        value == '&' || value == '|' || value == '~') {
-      ++current;
-      continue;
-    }
-    if (value == '/' && current + 1 < end &&
-        (current[1] == '/' || current[1] == '*')) return current;
-    return current;
-  }
-  return end;
-}
-// Confirm that the cursor reached a usable recovery restart.
-inline bool recoveryCanResume(const LexerCursor& cursor) noexcept {
-  if (cursor.current >= cursor.end) return true;
-  const char value = *cursor.current;
-  if (value == 10 || value == 13) return true;
-  if (value == 59 || value == 44) return true;
-  if (value == 41 || value == 93 || value == 125) return true;
-  if (value == 64 || value == 35) return true;
-  if (isAsciiLetter(value)) return true;
-  if (isAsciiDigitValue(value)) return true;
-  if (value == 95 || value == 36) return true;
-  if (value == 33 || value == 43 || value == 45) return true;
-  if (value == 42 || value == 60 || value == 62) return true;
-  if (value == 61 || value == 37 || value == 38) return true;
-  if (value == 124 || value == 126) return true;
-  return static_cast<unsigned char>(value) >= 128u;
-}
-
 } // namespace sift::lexer
