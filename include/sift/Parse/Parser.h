@@ -8,7 +8,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
-#include <vector>
+#include <unordered_set>\n#include <vector>
 
 namespace sift::parse {
 
@@ -303,16 +303,14 @@ private:
   lexer::Lexer lexer_;
   std::vector<Diagnostic> diagnostics_;
 
-  std::vector<std::string> callingNames_;
-  std::vector<std::string> functionNames_;
-  std::vector<std::string> structNames_;
+  std::unordered_set<std::string> callingNames_;
+  std::unordered_set<std::string> functionNames_;
+  std::unordered_set<std::string> structNames_;
 
   Token current_{};
   Token previous_{};
-  bool hasCurrent_ = false;
 
   void advance();
-  Token peek() const;
   bool check(TokenKind kind) const;
   bool match(TokenKind kind);
   bool expect(TokenKind kind, std::string_view message);
@@ -353,15 +351,9 @@ private:
   std::string tokenText(const Token& token) const;
 
   bool isExpressionStart(TokenKind kind) const noexcept;
-  bool isStatementStart(TokenKind kind) const noexcept;
-  bool isTypeToken(TokenKind kind) const noexcept;
   bool isAssignmentOperator(TokenKind kind) const noexcept;
 
-  static int precedence(TokenKind kind) noexcept;
   static std::string operatorText(TokenKind kind);
-  static bool containsName(
-      const std::vector<std::string>& names,
-      std::string_view name) noexcept;
 };
 
 } // namespace sift::parse
