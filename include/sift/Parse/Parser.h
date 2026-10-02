@@ -8,7 +8,8 @@
 #include <string>
 #include <string_view>
 #include <variant>
-#include <unordered_set>\n#include <vector>
+#include <unordered_set>
+#include <vector>
 
 namespace sift::parse {
 
@@ -44,6 +45,9 @@ enum class NodeKind {
   ForStatement,
   ReturnStatement,
   DeferStatement,
+  BreakStatement,
+  ContinueStatement,
+  SwitchStatement,
   ExpressionStatement,
   IdentifierExpression,
   LiteralExpression,
@@ -257,6 +261,33 @@ struct DeferStatement final : ASTNode {
   }
 };
 
+struct BreakStatement final : ASTNode {
+  NodeKind kind() const noexcept override {
+    return NodeKind::BreakStatement;
+  }
+};
+
+struct ContinueStatement final : ASTNode {
+  NodeKind kind() const noexcept override {
+    return NodeKind::ContinueStatement;
+  }
+};
+
+struct SwitchCase final : ASTNode {
+  std::unique_ptr<Expression> condition;
+  std::unique_ptr<Block> body;
+  bool isDefault = false;
+};
+
+struct SwitchStatement final : ASTNode {
+  std::unique_ptr<Expression> subject;
+  std::vector<std::unique_ptr<SwitchCase>> cases;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::SwitchStatement;
+  }
+};
+
 struct ExpressionStatement final : ASTNode {
   std::unique_ptr<Expression> expression;
 
@@ -276,6 +307,9 @@ struct Statement final {
       ForStatement,
       ReturnStatement,
       DeferStatement,
+      BreakStatement,
+      ContinueStatement,
+      SwitchStatement,
       ExpressionStatement> value;
 };
 
@@ -330,6 +364,9 @@ private:
   std::unique_ptr<ForStatement> parseFor();
   std::unique_ptr<ReturnStatement> parseReturn();
   std::unique_ptr<DeferStatement> parseDefer();
+  std::unique_ptr<SwitchStatement> parseSwitch();
+  std::unique_ptr<BreakStatement> parseBreak();
+  std::unique_ptr<ContinueStatement> parseContinue();
   std::unique_ptr<ExpressionStatement> parseExpressionStatement();
 
   std::unique_ptr<Block> parseBlock();
