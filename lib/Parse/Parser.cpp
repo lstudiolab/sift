@@ -398,10 +398,7 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
   }
 
   if (!expect(TokenKind::LeftParen, "expected '(' after function name")) {
-    synchronize();
-    if (!check(TokenKind::LeftBrace)) {
-      synchronizeToBlockStart();
-    }
+    synchronizeToBlockStart();
     if (!check(TokenKind::LeftBrace)) {
       return node;
     }
