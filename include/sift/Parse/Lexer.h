@@ -94,6 +94,9 @@ private:
 
   void recoverMalformedToken() noexcept;
 
+  void recoverStringLiteral() noexcept;
+  void recoverCharacterLiteral() noexcept;
+
   Token lexImpl();
   Token lexIdentifierOrKeyword();
   Token lexNumber();
