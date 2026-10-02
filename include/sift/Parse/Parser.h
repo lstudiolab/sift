@@ -369,6 +369,7 @@ private:
   void error(const Token& token, std::string_view message);
   void synchronize();
   void synchronizeExpression();
+  void synchronizeToBlockStart();
 
   std::unique_ptr<ImportDeclaration> parseImport();
   std::unique_ptr<StructDeclaration> parseStruct();
