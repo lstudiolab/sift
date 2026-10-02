@@ -154,7 +154,8 @@ constexpr bool isContinuationByte(unsigned char value) noexcept {
 }
 
 constexpr bool isAsciiLetter(char value) noexcept {
-  return hasCharacterClass(value, 1u);
+  return (value >= 'a' && value <= 'z') ||
+         (value >= 'A' && value <= 'Z');
 }
 
 constexpr bool isAsciiDigitValue(char value) noexcept {
