@@ -2826,8 +2826,8 @@ Token Lexer::lexOperatorOrPunctuation() {
       },
       "unrecognized Sift character");
 
-  recoverMalformedToken();
-
+  // The offending byte has already been consumed. Do not scan past the
+  // next token just because the current character is unsupported.
   return finish(TokenKind::Unknown);
 }
 
