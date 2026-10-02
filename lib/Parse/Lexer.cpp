@@ -3104,5 +3104,117 @@ Token Lexer::lexCallingName() {
 
   return token;
 }
+// Recover a malformed escape sequence without consuming the next token.
+inline const char* recoveryEscapeTail(const char* current, const char* end) noexcept {
+  if (current >= end) return end;
+  if (*current == 92) ++current;
+  if (current >= end) return current;
+  const char value = *current;
+  if (value == 'n' || value == 'r' || value == 't' || value == '0') return current + 1;
+  if (value == 'b' || value == 'f' || value == 'v') return current + 1;
+  if (value == 92 || value == 34 || value == 39) return current + 1;
+  if (value == 'x') {
+    ++current;
+    for (unsigned index = 0; index < 2 && current < end; ++index) {
+      if (!isHexDigit(*current)) break;
+      ++current;
+    }
+    return current;
+  }
+  if (value == 'u') {
+    ++current;
+    for (unsigned index = 0; index < 4 && current < end; ++index) {
+      if (!isHexDigit(*current)) break;
+      ++current;
+    }
+    return current;
+  }
+  return current + 1;
+}
+
+// Recover malformed numeric separators and exponent tails.
+inline const char* recoveryNumberTail(const char* current, const char* end) noexcept {
+  bool separator = false;
+  bool digit = false;
+  while (current < end) {
+    const char value = *current;
+    if (isDecimalDigit(value)) {
+      digit = true;
+      separator = false;
+      ++current;
+      continue;
+    }
+    if (value == '_' && !separator) {
+      separator = true;
+      ++current;
+      continue;
+    }
+    if (value == '.' && digit) {
+      ++current;
+      while (current < end && isDecimalDigit(*current)) ++current;
+      continue;
+    }
+    if ((value == 'e' || value == 'E') && digit) {
+      ++current;
+      if (current < end && (*current == '+' || *current == '-')) ++current;
+      while (current < end && isDecimalDigit(*current)) ++current;
+      continue;
+    }
+    break;
+  }
+  return current;
+}
+
+// Recover mismatched delimiters while preserving the next synchronization point.
+inline const char* recoveryDelimiterTail(const char* current, const char* end) noexcept {
+  unsigned paren = 0;
+  unsigned bracket = 0;
+  unsigned brace = 0;
+  while (current < end) {
+    const char value = *current;
+    if (value == '(') { ++paren; ++current; continue; }
+    if (value == '[') { ++bracket; ++current; continue; }
+    if (value == '{') { ++brace; ++current; continue; }
+    if (value == ')' && paren != 0) { --paren; ++current; continue; }
+    if (value == ']' && bracket != 0) { --bracket; ++current; continue; }
+    if (value == '}' && brace != 0) { --brace; ++current; continue; }
+    if ((value == ')' || value == ']' || value == '}') &&
+        paren == 0 && bracket == 0 && brace == 0) return current;
+    if (value == ';' && paren == 0 && bracket == 0 && brace == 0) return current;
+    if (value == '\n' || value == '\r') return current;
+    ++current;
+  }
+  return end;
+}
+
+// Recover a damaged directive suffix without swallowing a following directive.
+inline const char* recoveryDirectiveTail(const char* current, const char* end) noexcept {
+  while (current < end) {
+    const char value = *current;
+    if (value == '@' || value == '#') return current;
+    if (value == ';' || value == '}' || value == '{') return current;
+    if (value == '\n' || value == '\r') return current;
+    if (value == ' ' || value == '\t') return current;
+    ++current;
+  }
+  return end;
+}
+
+// Recover a malformed operator suffix without crossing a comment boundary.
+inline const char* recoveryOperatorTail(const char* current, const char* end) noexcept {
+  while (current < end) {
+    const char value = *current;
+    if (value == '=' || value == '!' || value == '+' || value == '-' ||
+        value == '*' || value == '%' || value == '<' || value == '>' ||
+        value == '&' || value == '|' || value == '~') {
+      ++current;
+      continue;
+    }
+    if (value == '/' && current + 1 < end &&
+        (current[1] == '/' || current[1] == '*')) return current;
+    return current;
+  }
+  return end;
+}
 
 } // namespace sift::lexer
