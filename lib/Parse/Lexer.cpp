@@ -187,154 +187,9 @@ constexpr bool isAsciiDigit(char value) noexcept {
   return value >= '0' && value <= '9';
 }
 
-constexpr bool isAsciiHexDigit(char value) noexcept {
-  return isAsciiDigit(value) ||
-         (value >= 'a' && value <= 'f') ||
-         (value >= 'A' && value <= 'F');
-}
-
-constexpr bool isAsciiBinaryDigit(char value) noexcept {
-  return value == '0' || value == '1';
-}
-
-constexpr bool isAsciiOctalDigit(char value) noexcept {
-  return value >= '0' && value <= '7';
-}
-
 constexpr bool isAsciiIdentifierStart(char value) noexcept {
-  return isAsciiLetter(value) || value == '_';
-}
-
-constexpr bool isAsciiIdentifierContinue(char value) noexcept {
-  return isAsciiIdentifierStart(value) ||
-         isAsciiDigit(value);
-}
-
-constexpr bool isHorizontalWhitespace(char value) noexcept {
-  return value == ' ' ||
-         value == '\t' ||
-         value == '\v' ||
-         value == '\f' ||
-         value == '\r';
-}
-
-constexpr bool isLineBreak(char value) noexcept {
-  return value == '\n';
-}
-
-constexpr bool isQuote(char value) noexcept {
-  return value == '"' || value == '\'';
-}
-
-constexpr bool isDoubleQuote(char value) noexcept {
-  return value == '"';
-}
-
-constexpr bool isSingleQuote(char value) noexcept {
-  return value == '\'';
-}
-
-constexpr bool isHashLead(char value) noexcept {
-  return value == '#';
-}
-
-constexpr bool isAtLead(char value) noexcept {
-  return value == '@';
-}
-
-constexpr bool isOperatorLead(char value) noexcept {
-  switch (value) {
-    case '=':
-    case '!':
-    case '+':
-    case '-':
-    case '*':
-    case '/':
-    case '%':
-    case '<':
-    case '>':
-    case '&':
-    case '|':
-    case '~':
-      return true;
-    default:
-      return false;
-  }
-}
-
-constexpr bool isPunctuationLead(char value) noexcept {
-  switch (value) {
-    case '(':
-    case ')':
-    case '{':
-    case '}':
-    case '[':
-    case ']':
-    case ',':
-    case '.':
-    case ':':
-    case ';':
-    case '?':
-      return true;
-    default:
-      return false;
-  }
-}
-
-constexpr bool isValidUnicodeScalar(std::uint32_t value) noexcept {
-  return value <= 0x10ffffu &&
-         !(value >= 0xd800u && value <= 0xdfffu);
-}
-
-constexpr bool isContinuationByte(unsigned char value) noexcept {
-  return (value & 0xc0u) == 0x80u;
-}
-
-constexpr bool isTwoByteLead(unsigned char value) noexcept {
-  return (value & 0xe0u) == 0xc0u;
-}
-
-constexpr bool isThreeByteLead(unsigned char value) noexcept {
-  return (value & 0xf0u) == 0xe0u;
-}
-
-constexpr bool isFourByteLead(unsigned char value) noexcept {
-  return (value & 0xf8u) == 0xf0u;
-}
-
-constexpr unsigned utf8Length(unsigned char value) noexcept {
-  if (value < 0x80u) {
-    return 1u;
-  }
-
-  if (isTwoByteLead(value)) {
-    return 2u;
-  }
-
-  if (isThreeByteLead(value)) {
-    return 3u;
-  }
-
-  if (isFourByteLead(value)) {
-    return 4u;
-  }
-
-  return 0u;
-}
-
-constexpr std::uint32_t utf8Minimum(unsigned length) noexcept {
-  switch (length) {
-    case 1u:
-      return 0u;
-    case 2u:
-      return 0x80u;
-    case 3u:
-      return 0x800u;
-    case 4u:
-      return 0x10000u;
-    default:
-      return 0xffffffffu;
-  }
+  return isAsciiLetter(value) ||
+         value == '_';
 }
 
 inline bool hasBytes(
@@ -346,23 +201,6 @@ inline bool hasBytes(
   }
 
   return static_cast<std::size_t>(end - current) >= count;
-}
-
-inline bool matches(
-    const char* current,
-    const char* end,
-    std::string_view text) noexcept {
-  if (!hasBytes(current, end, text.size())) {
-    return false;
-  }
-
-  for (std::size_t index = 0; index < text.size(); ++index) {
-    if (current[index] != text[index]) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 inline bool startsBOM(
@@ -382,171 +220,10 @@ inline bool isPotentialComment(
          (current[1] == '/' || current[1] == '*');
 }
 
-inline bool isPotentialLeadingFloat(
-    char current,
-    char next) noexcept {
-  return current == '.' && isAsciiDigit(next);
-}
-
 inline bool isPotentialIdentifier(
     char current) noexcept {
   return isAsciiIdentifierStart(current) ||
          byteOf(current) >= 0x80u;
-}
-
-inline bool isCompoundAssignment(
-    char current,
-    char next) noexcept {
-  switch (current) {
-    case '+':
-    case '-':
-    case '*':
-    case '/':
-    case '%':
-      return next == '=';
-    default:
-      return false;
-  }
-}
-
-inline bool isComparisonPair(
-    char current,
-    char next) noexcept {
-  return (current == '=' && next == '=') ||
-         (current == '!' && next == '=') ||
-         (current == '<' && next == '=') ||
-         (current == '>' && next == '=') ||
-         (current == '~' && next == '=');
-}
-
-inline bool isLogicalPair(
-    char current,
-    char next) noexcept {
-  return (current == '&' && next == '&') ||
-         (current == '|' && next == '|');
-}
-
-inline bool isArrowPair(
-    char current,
-    char next) noexcept {
-  return current == '-' && next == '>';
-}
-
-inline bool isSeparator(char value) noexcept {
-  return value == '_';
-}
-
-inline const char* scanIdentifierASCII(
-    const char* current,
-    const char* end) noexcept {
-  while (current < end &&
-         isAsciiIdentifierContinue(*current)) {
-    ++current;
-  }
-
-  return current;
-}
-
-inline const char* scanDecimal(
-    const char* current,
-    const char* end) noexcept {
-  while (current < end &&
-         (isAsciiDigit(*current) || isSeparator(*current))) {
-    ++current;
-  }
-
-  return current;
-}
-
-inline const char* scanHexadecimal(
-    const char* current,
-    const char* end) noexcept {
-  while (current < end &&
-         (isAsciiHexDigit(*current) || isSeparator(*current))) {
-    ++current;
-  }
-
-  return current;
-}
-
-inline const char* scanBinary(
-    const char* current,
-    const char* end) noexcept {
-  while (current < end &&
-         (isAsciiBinaryDigit(*current) || isSeparator(*current))) {
-    ++current;
-  }
-
-  return current;
-}
-
-inline const char* scanOctal(
-    const char* current,
-    const char* end) noexcept {
-  while (current < end &&
-         (isAsciiOctalDigit(*current) || isSeparator(*current))) {
-    ++current;
-  }
-
-  return current;
-}
-
-inline bool validateCodePoint(
-    const char* current,
-    const char* end,
-    unsigned& consumed) noexcept {
-  consumed = 0u;
-
-  if (!hasBytes(current, end, 1u)) {
-    return false;
-  }
-
-  const unsigned char lead = byteOf(*current);
-
-  if (lead < 0x80u) {
-    consumed = 1u;
-    return true;
-  }
-
-  const unsigned length = utf8Length(lead);
-
-  if (length < 2u || !hasBytes(current, end, length)) {
-    return false;
-  }
-
-  std::uint32_t value = 0u;
-
-  if (length == 2u) {
-    value = lead & 0x1fu;
-  } else if (length == 3u) {
-    value = lead & 0x0fu;
-  } else {
-    value = lead & 0x07u;
-  }
-
-  for (unsigned index = 1u; index < length; ++index) {
-    const unsigned char continuation =
-        byteOf(current[index]);
-
-    if (!isContinuationByte(continuation)) {
-      return false;
-    }
-
-    value =
-        (value << 6u) |
-        static_cast<std::uint32_t>(continuation & 0x3fu);
-  }
-
-  if (value < utf8Minimum(length)) {
-    return false;
-  }
-
-  if (!isValidUnicodeScalar(value)) {
-    return false;
-  }
-
-  consumed = length;
-  return true;
 }
 
 inline bool keywordCandidateCanMatch(
@@ -566,77 +243,6 @@ inline bool keywordCandidateCanMatch(
   }
 
   return true;
-}
-
-inline bool isTrivia(TokenKind kind) noexcept {
-  return kind == TokenKind::Comment ||
-         kind == TokenKind::Newline;
-}
-
-inline bool isLiteral(TokenKind kind) noexcept {
-  return kind == TokenKind::IntegerLiteral ||
-         kind == TokenKind::FloatingLiteral ||
-         kind == TokenKind::StringLiteral ||
-         kind == TokenKind::CharacterLiteral;
-}
-
-inline bool isComparison(TokenKind kind) noexcept {
-  switch (kind) {
-    case TokenKind::EqualEqual:
-    case TokenKind::BangEqual:
-    case TokenKind::Less:
-    case TokenKind::LessEqual:
-    case TokenKind::Greater:
-    case TokenKind::GreaterEqual:
-    case TokenKind::TildeEqual:
-      return true;
-    default:
-      return false;
-  }
-}
-
-inline bool isAssignment(TokenKind kind) noexcept {
-  switch (kind) {
-    case TokenKind::Equal:
-    case TokenKind::PlusEqual:
-    case TokenKind::MinusEqual:
-    case TokenKind::StarEqual:
-    case TokenKind::SlashEqual:
-    case TokenKind::PercentEqual:
-      return true;
-    default:
-      return false;
-  }
-}
-
-inline bool isStructural(TokenKind kind) noexcept {
-  switch (kind) {
-    case TokenKind::LeftParen:
-    case TokenKind::RightParen:
-    case TokenKind::LeftBrace:
-    case TokenKind::RightBrace:
-    case TokenKind::LeftBracket:
-    case TokenKind::RightBracket:
-      return true;
-    default:
-      return false;
-  }
-}
-
-inline bool isKeywordLike(TokenKind kind) noexcept {
-  switch (kind) {
-    case TokenKind::Identifier:
-    case TokenKind::CallingName:
-    case TokenKind::IntegerLiteral:
-    case TokenKind::FloatingLiteral:
-    case TokenKind::StringLiteral:
-    case TokenKind::CharacterLiteral:
-    case TokenKind::EndOfFile:
-    case TokenKind::Unknown:
-      return false;
-    default:
-      return true;
-  }
 }
 
 } // namespace detail
@@ -1280,10 +886,8 @@ void Lexer::skipWhitespace() {
       continue;
     }
 
-    const unsigned char first =
-        static_cast<unsigned char>(value);
-
-    if (startsUTF8BOM(
+    if (cursor_.offset == 0 &&
+        detail::startsBOM(
             cursor_.current,
             cursor_.end)) {
       cursor_.current += 3;
@@ -1580,50 +1184,6 @@ bool Lexer::validateUTF8(
 
   return true;
 }
-
-namespace {
-
-inline bool isFastAsciiIdentifierByte(unsigned char value) noexcept {
-  return (value >= static_cast<unsigned char>('a') &&
-          value <= static_cast<unsigned char>('z')) ||
-         (value >= static_cast<unsigned char>('A') &&
-          value <= static_cast<unsigned char>('Z')) ||
-         (value >= static_cast<unsigned char>('0') &&
-          value <= static_cast<unsigned char>('9')) ||
-         value == static_cast<unsigned char>('_');
-}
-
-inline bool isAsciiIdentifierBeginning(unsigned char value) noexcept {
-  return (value >= static_cast<unsigned char>('a') &&
-          value <= static_cast<unsigned char>('z')) ||
-         (value >= static_cast<unsigned char>('A') &&
-          value <= static_cast<unsigned char>('Z')) ||
-         value == static_cast<unsigned char>('_');
-}
-
-inline bool startsUTF8BOM(const char* current,
-                          const char* end) noexcept {
-  return current + 2 < end &&
-         static_cast<unsigned char>(current[0]) == 0xefu &&
-         static_cast<unsigned char>(current[1]) == 0xbbu &&
-         static_cast<unsigned char>(current[2]) == 0xbfu;
-}
-
-inline bool isValidUnicodeScalar(std::uint32_t value) noexcept {
-  return value <= 0x10ffffu &&
-         !(value >= 0xd800u && value <= 0xdfffu);
-}
-
-inline void advanceAsciiIdentifierBytes(const char*& current,
-                                        const char* end) noexcept {
-  while (current < end &&
-         isFastAsciiIdentifierByte(
-             static_cast<unsigned char>(*current))) {
-    ++current;
-  }
-}
-
-} // namespace
 
 Token Lexer::lexIdentifierOrKeyword() {
   beginToken();
