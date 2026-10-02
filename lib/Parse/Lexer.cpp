@@ -1195,10 +1195,18 @@ char Lexer::consumeChar() noexcept {
 
   const char value = *cursor_.current;
 
-  if (value == '\r') {
+  if (value != '\r' &&
+      value != '\n') {
     ++cursor_.current;
     ++cursor_.offset;
+    ++cursor_.column;
+    return value;
+  }
 
+  ++cursor_.current;
+  ++cursor_.offset;
+
+  if (value == '\r') {
     if (!atEnd() &&
         *cursor_.current == '\n') {
       ++cursor_.current;
@@ -1207,21 +1215,12 @@ char Lexer::consumeChar() noexcept {
 
     ++cursor_.line;
     cursor_.column = 1;
-
     return '\n';
   }
 
-  ++cursor_.current;
-  ++cursor_.offset;
-
-  if (value == '\n') {
-    ++cursor_.line;
-    cursor_.column = 1;
-  } else {
-    ++cursor_.column;
-  }
-
-  return value;
+  ++cursor_.line;
+  cursor_.column = 1;
+  return '\n';
 }
 
 // Consume one character only when it matches the expected value.
@@ -2940,7 +2939,9 @@ Token Lexer::lexImpl() {
 
     beginToken();
 
-    const char current = peekChar();
+    const char current = *cursor_.current;
+    const unsigned char byte =
+        static_cast<unsigned char>(current);
 
     if (current == '\n' ||
         current == '\r') {
@@ -2953,13 +2954,11 @@ Token Lexer::lexImpl() {
       continue;
     }
 
-    // Slash is checked before the general operator path because it can
-    // begin either a comment or a slash token. Keeping this branch early
-    // avoids entering the larger punctuation/operator switch for comments.
+    // Keep comment recognition ahead of the operator switch.
     if (current == '/' &&
-        detail::isPotentialComment(
-            cursor_.current,
-            cursor_.end)) {
+        cursor_.current + 1 < cursor_.end &&
+        (cursor_.current[1] == '/' ||
+         cursor_.current[1] == '*')) {
       Token token =
           lexCommentOrSlash();
 
@@ -2970,14 +2969,234 @@ Token Lexer::lexImpl() {
       return token;
     }
 
-    if (detail::isPotentialIdentifier(current) &&
-        isIdentifierStart(current)) {
+    // ASCII identifiers dominate normal source, so classify them directly.
+    const bool asciiIdentifierStart =
+        (byte >= static_cast<unsigned char>('A') &&
+         byte <= static_cast<unsigned char>('Z')) ||
+        (byte >= static_cast<unsigned char>('a') &&
+         byte <= static_cast<unsigned char>('z')) ||
+        current == '_' ||
+        current == '
+
+    Token token = lexOperatorOrPunctuation();
+    updateContext(token.kind, token.text);
+    return token;
+  }
+}
+
+// Consume the next token.
+// Consume and return the next token.
+Token Lexer::lex() {
+  if (hasLookahead_) {
+    Token result = lookahead_;
+
+    commitLookaheadDiagnostics();
+
+    hasLookahead_ = false;
+    lookahead_ = {};
+    lookaheadDiagnostics_.clear();
+
+    updateContext(
+        result.kind,
+        result.text);
+
+    return result;
+  }
+
+  return lexImpl();
+}
+
+// Speculatively lex the next token without committing state.
+// Return the next token without committing cursor state.
+Token Lexer::peek() {
+  if (hasLookahead_) {
+    return lookahead_;
+  }
+
+  const LexState savedState =
+      saveState();
+
+  const std::size_t savedDiagnosticCount =
+      diagnostics_.size();
+
+  Token speculativeToken =
+      lexImpl();
+
+  if (diagnostics_.size() > savedDiagnosticCount) {
+    lookaheadDiagnostics_.assign(
+        diagnostics_.begin() +
+            static_cast<std::ptrdiff_t>(
+                savedDiagnosticCount),
+        diagnostics_.end());
+
+    diagnostics_.resize(
+        savedDiagnosticCount);
+  } else {
+    lookaheadDiagnostics_.clear();
+  }
+
+  restoreState(savedState);
+
+  lookahead_ = speculativeToken;
+  hasLookahead_ = true;
+
+  return lookahead_;
+}
+
+// Lex the next identifier as a calling name.
+// Lex the next identifier as an explicit calling name.
+Token Lexer::lexCallingName() {
+  Token token = lex();
+
+  if (token.kind == TokenKind::Identifier) {
+    token.kind = TokenKind::CallingName;
+  }
+
+  return token;
+}
+// Recover a malformed escape sequence without consuming the next token.
+inline const char* recoveryEscapeTail(const char* current, const char* end) noexcept {
+  if (current >= end) return end;
+  if (*current == 92) ++current;
+  if (current >= end) return current;
+  const char value = *current;
+  if (value == 'n' || value == 'r' || value == 't' || value == '0') return current + 1;
+  if (value == 'b' || value == 'f' || value == 'v') return current + 1;
+  if (value == 92 || value == 34 || value == 39) return current + 1;
+  if (value == 'x') {
+    ++current;
+    for (unsigned index = 0; index < 2 && current < end; ++index) {
+      if (!isHexDigit(*current)) break;
+      ++current;
+    }
+    return current;
+  }
+  if (value == 'u') {
+    ++current;
+    for (unsigned index = 0; index < 4 && current < end; ++index) {
+      if (!isHexDigit(*current)) break;
+      ++current;
+    }
+    return current;
+  }
+  return current + 1;
+}
+
+// Recover malformed numeric separators and exponent tails.
+inline const char* recoveryNumberTail(const char* current, const char* end) noexcept {
+  bool separator = false;
+  bool digit = false;
+  while (current < end) {
+    const char value = *current;
+    if (isDecimalDigit(value)) {
+      digit = true;
+      separator = false;
+      ++current;
+      continue;
+    }
+    if (value == '_' && !separator) {
+      separator = true;
+      ++current;
+      continue;
+    }
+    if (value == '.' && digit) {
+      ++current;
+      while (current < end && isDecimalDigit(*current)) ++current;
+      continue;
+    }
+    if ((value == 'e' || value == 'E') && digit) {
+      ++current;
+      if (current < end && (*current == '+' || *current == '-')) ++current;
+      while (current < end && isDecimalDigit(*current)) ++current;
+      continue;
+    }
+    break;
+  }
+  return current;
+}
+
+// Recover mismatched delimiters while preserving the next synchronization point.
+inline const char* recoveryDelimiterTail(const char* current, const char* end) noexcept {
+  unsigned paren = 0;
+  unsigned bracket = 0;
+  unsigned brace = 0;
+  while (current < end) {
+    const char value = *current;
+    if (value == '(') { ++paren; ++current; continue; }
+    if (value == '[') { ++bracket; ++current; continue; }
+    if (value == '{') { ++brace; ++current; continue; }
+    if (value == ')' && paren != 0) { --paren; ++current; continue; }
+    if (value == ']' && bracket != 0) { --bracket; ++current; continue; }
+    if (value == '}' && brace != 0) { --brace; ++current; continue; }
+    if ((value == ')' || value == ']' || value == '}') &&
+        paren == 0 && bracket == 0 && brace == 0) return current;
+    if (value == ';' && paren == 0 && bracket == 0 && brace == 0) return current;
+    if (value == '\n' || value == '\r') return current;
+    ++current;
+  }
+  return end;
+}
+
+// Recover a damaged directive suffix without swallowing a following directive.
+inline const char* recoveryDirectiveTail(const char* current, const char* end) noexcept {
+  while (current < end) {
+    const char value = *current;
+    if (value == '@' || value == '#') return current;
+    if (value == ';' || value == '}' || value == '{') return current;
+    if (value == '\n' || value == '\r') return current;
+    if (value == ' ' || value == '\t') return current;
+    ++current;
+  }
+  return end;
+}
+
+// Recover a malformed operator suffix without crossing a comment boundary.
+inline const char* recoveryOperatorTail(const char* current, const char* end) noexcept {
+  while (current < end) {
+    const char value = *current;
+    if (value == '=' || value == '!' || value == '+' || value == '-' ||
+        value == '*' || value == '%' || value == '<' || value == '>' ||
+        value == '&' || value == '|' || value == '~') {
+      ++current;
+      continue;
+    }
+    if (value == '/' && current + 1 < end &&
+        (current[1] == '/' || current[1] == '*')) return current;
+    return current;
+  }
+  return end;
+}
+// Confirm that the cursor reached a usable recovery restart.
+inline bool recoveryCanResume(const LexerCursor& cursor) noexcept {
+  if (cursor.current >= cursor.end) return true;
+  const char value = *cursor.current;
+  if (value == 10 || value == 13) return true;
+  if (value == 59 || value == 44) return true;
+  if (value == 41 || value == 93 || value == 125) return true;
+  if (value == 64 || value == 35) return true;
+  if (isAsciiLetter(value)) return true;
+  if (isAsciiDigitValue(value)) return true;
+  if (value == 95 || value == 36) return true;
+  if (value == 33 || value == 43 || value == 45) return true;
+  if (value == 42 || value == 60 || value == 62) return true;
+  if (value == 61 || value == 37 || value == 38) return true;
+  if (value == 124 || value == 126) return true;
+  return static_cast<unsigned char>(value) >= 128u;
+}
+
+} // namespace sift::lexer
+;
+
+    if (asciiIdentifierStart ||
+        (byte >= 0x80u &&
+         options_.allowUnicodeIdentifiers)) {
       Token token = lexIdentifierOrKeyword();
       updateContext(token.kind, token.text);
       return token;
     }
 
-    if (detail::isAsciiDigit(current) ||
+    if ((byte >= static_cast<unsigned char>('0') &&
+         byte <= static_cast<unsigned char>('9')) ||
         (current == '.' &&
          options_.allowLeadingDotFloat &&
          isDecimalDigit(peekChar(1)))) {
@@ -2986,25 +3205,25 @@ Token Lexer::lexImpl() {
       return token;
     }
 
-    if (detail::isDoubleQuote(current)) {
+    if (current == '"') {
       Token token = lexString();
       updateContext(token.kind, token.text);
       return token;
     }
 
-    if (detail::isSingleQuote(current)) {
+    if (current == '\'') {
       Token token = lexCharacter();
       updateContext(token.kind, token.text);
       return token;
     }
 
-    if (detail::isHashLead(current)) {
+    if (current == '#') {
       Token token = lexHashOrDirective();
       updateContext(token.kind, token.text);
       return token;
     }
 
-    if (detail::isAtLead(current)) {
+    if (current == '@') {
       Token token = lexAtOrDirective();
       updateContext(token.kind, token.text);
       return token;
