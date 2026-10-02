@@ -341,6 +341,8 @@ public:
 private:
   lexer::Lexer lexer_;
   std::vector<Diagnostic> diagnostics_;
+  bool diagnosticsTruncated_ = false;
+  static constexpr std::size_t maxDiagnostics_ = 256;
 
   std::unordered_set<std::string_view> callingNames_;
   std::unordered_set<std::string_view> functionNames_;
