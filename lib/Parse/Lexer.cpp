@@ -1029,8 +1029,7 @@ bool Lexer::consumeUnicodeEscape() {
     }
 
     if (digits == 0 ||
-        value > 0x10ffffu ||
-        (value >= 0xd800u && value <= 0xdfffu)) {
+        !isValidUnicodeScalar(value)) {
       addDiagnostic(
           DiagnosticSeverity::Error,
           location(),
@@ -1140,34 +1139,6 @@ inline bool isAsciiIdentifierBeginning(unsigned char value) noexcept {
          value == static_cast<unsigned char>('_');
 }
 
-inline bool isLineTerminator(unsigned char value) noexcept {
-  return value == static_cast<unsigned char>('\n') ||
-         value == static_cast<unsigned char>('\r');
-}
-
-inline bool isHorizontalWhitespace(unsigned char value) noexcept {
-  return value == static_cast<unsigned char>(' ') ||
-         value == static_cast<unsigned char>('\t') ||
-         value == static_cast<unsigned char>('\v') ||
-         value == static_cast<unsigned char>('\f');
-}
-
-inline bool startsLineComment(const char* current,
-                              const char* end) noexcept {
-  return current < end &&
-         *current == '/' &&
-         current + 1 < end &&
-         current[1] == '/';
-}
-
-inline bool startsBlockComment(const char* current,
-                               const char* end) noexcept {
-  return current < end &&
-         *current == '/' &&
-         current + 1 < end &&
-         current[1] == '*';
-}
-
 inline bool startsUTF8BOM(const char* current,
                           const char* end) noexcept {
   return current + 2 < end &&
@@ -1179,50 +1150,6 @@ inline bool startsUTF8BOM(const char* current,
 inline bool isValidUnicodeScalar(std::uint32_t value) noexcept {
   return value <= 0x10ffffu &&
          !(value >= 0xd800u && value <= 0xdfffu);
-}
-
-inline bool isDecimalDigitByte(unsigned char value) noexcept {
-  return value >= static_cast<unsigned char>('0') &&
-         value <= static_cast<unsigned char>('9');
-}
-
-inline bool isHexDigitByte(unsigned char value) noexcept {
-  return isDecimalDigitByte(value) ||
-         (value >= static_cast<unsigned char>('a') &&
-          value <= static_cast<unsigned char>('f')) ||
-         (value >= static_cast<unsigned char>('A') &&
-          value <= static_cast<unsigned char>('F'));
-}
-
-inline unsigned hexadecimalDigitValue(unsigned char value) noexcept {
-  if (value >= static_cast<unsigned char>('0') &&
-      value <= static_cast<unsigned char>('9')) {
-    return static_cast<unsigned>(value -
-                                 static_cast<unsigned char>('0'));
-  }
-
-  if (value >= static_cast<unsigned char>('a') &&
-      value <= static_cast<unsigned char>('f')) {
-    return static_cast<unsigned>(value -
-                                 static_cast<unsigned char>('a') +
-                                 10u);
-  }
-
-  return static_cast<unsigned>(value -
-                               static_cast<unsigned char>('A') +
-                               10u);
-}
-
-inline bool hasDecimalDigitAfter(const char* current,
-                                 const char* end) noexcept {
-  return current < end &&
-         isDecimalDigitByte(static_cast<unsigned char>(*current));
-}
-
-inline bool hasHexDigitAfter(const char* current,
-                             const char* end) noexcept {
-  return current < end &&
-         isHexDigitByte(static_cast<unsigned char>(*current));
 }
 
 inline void advanceAsciiIdentifierBytes(const char*& current,
