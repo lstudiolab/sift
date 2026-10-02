@@ -987,6 +987,19 @@ std::string Parser::parseCallingName() {
 //
 // Token text is copied into AST-owned strings because lexer token views refer
 // to the parser source buffer.  The AST must own its names independently.
+//
+// This ownership boundary is especially important for compiler tooling that
+// keeps an AST after lexical analysis has completed.  Parser nodes therefore
+// never retain temporary lexer storage for names or operator spellings.
+//
+// The parser also avoids storing redundant source offsets in each expression.
+// Every AST node already has a SourceLocation, while the lexer remains the
+// authoritative source-location calculator.
+//
+// Keeping these responsibilities separated makes later parser optimization
+// possible without changing the semantic representation consumed downstream.
+//
+// End of parser implementation helpers.
 std::string Parser::tokenText(const Token& token) const {
   return std::string(token.text());
 }
