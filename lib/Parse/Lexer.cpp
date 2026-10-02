@@ -20,6 +20,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <string_view>
 
 namespace sift::lexer {
@@ -146,11 +147,11 @@ struct KeywordBuckets {
     next.fill(-1);
 
     for (std::size_t index = 0; index < Keywords.size(); ++index) {
-      const std::size_t bucket =
-          static_cast<std::size_t>(Keywords[index].hash & 0xffu);
+      const unsigned char first =
+          static_cast<unsigned char>(Keywords[index].spelling.front());
 
-      next[index] = heads[bucket];
-      heads[bucket] = static_cast<int>(index);
+      next[index] = heads[first];
+      heads[first] = static_cast<int>(index);
     }
   }
 };
@@ -1249,12 +1250,12 @@ bool Lexer::consumeIf(std::string_view value) noexcept {
   const char* current =
       cursor_.current;
 
-  for (std::size_t index = 0;
-       index < length;
-       ++index) {
-    if (current[index] != value[index]) {
-      return false;
-    }
+  if (length != 0u &&
+      std::memcmp(
+          current,
+          value.data(),
+          length) != 0) {
+    return false;
   }
 
   cursor_.current =
@@ -1452,37 +1453,18 @@ TokenKind Lexer::classifyKeyword(std::string_view text) noexcept {
     return TokenKind::Identifier;
   }
 
-  const std::uint64_t textHash =
-      keywordHash(text);
-
-  const std::size_t bucket =
-      static_cast<std::size_t>(
-          textHash & 0xffu);
+  const unsigned char first =
+      static_cast<unsigned char>(text.front());
 
   int keywordIndex =
-      KeywordIndex.heads[bucket];
+      KeywordIndex.heads[first];
 
   while (keywordIndex >= 0) {
     const KeywordEntry& keyword =
         Keywords[static_cast<std::size_t>(keywordIndex)];
 
-    if (keyword.spelling.size() != text.size()) {
-      keywordIndex =
-          KeywordIndex.next[
-              static_cast<std::size_t>(keywordIndex)];
-
-      continue;
-    }
-
-    if (keyword.hash != textHash) {
-      keywordIndex =
-          KeywordIndex.next[
-              static_cast<std::size_t>(keywordIndex)];
-
-      continue;
-    }
-
-    if (keyword.spelling == text) {
+    if (keyword.spelling.size() == text.size() &&
+        keyword.spelling == text) {
       return keyword.kind;
     }
 
