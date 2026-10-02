@@ -1,0 +1,369 @@
+#ifndef SIFT_PARSE_PARSER_H
+#define SIFT_PARSE_PARSER_H
+
+#include "sift/Parse/Lexer.h"
+
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <variant>
+#include <vector>
+
+namespace sift::parse {
+
+using lexer::SourceLocation;
+using lexer::Token;
+using lexer::TokenKind;
+
+enum class DiagnosticSeverity {
+  Note,
+  Warning,
+  Error
+};
+
+struct Diagnostic {
+  DiagnosticSeverity severity = DiagnosticSeverity::Error;
+  SourceLocation location{};
+  std::string message;
+};
+
+enum class NodeKind {
+  Program,
+  ImportDeclaration,
+  FunctionDeclaration,
+  StructDeclaration,
+  VariableDeclaration,
+  ConstDeclaration,
+  Parameter,
+  Block,
+  IfStatement,
+  ElseStatement,
+  WhileStatement,
+  RepeatStatement,
+  ForStatement,
+  ReturnStatement,
+  DeferStatement,
+  ExpressionStatement,
+  IdentifierExpression,
+  LiteralExpression,
+  BinaryExpression,
+  UnaryExpression,
+  AssignmentExpression,
+  MemberExpression,
+  CallExpression
+};
+
+struct ASTNode {
+  virtual ~ASTNode() = default;
+  virtual NodeKind kind() const noexcept = 0;
+  SourceLocation location{};
+};
+
+struct Expression;
+struct Statement;
+
+struct IdentifierExpression final : ASTNode {
+  std::string name;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::IdentifierExpression;
+  }
+};
+
+struct LiteralExpression final : ASTNode {
+  TokenKind literalKind = TokenKind::Unknown;
+  std::string value;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::LiteralExpression;
+  }
+};
+
+struct BinaryExpression final : ASTNode {
+  std::string op;
+  std::unique_ptr<Expression> left;
+  std::unique_ptr<Expression> right;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::BinaryExpression;
+  }
+};
+
+struct UnaryExpression final : ASTNode {
+  std::string op;
+  std::unique_ptr<Expression> operand;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::UnaryExpression;
+  }
+};
+
+struct AssignmentExpression final : ASTNode {
+  std::string op;
+  std::unique_ptr<Expression> target;
+  std::unique_ptr<Expression> value;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::AssignmentExpression;
+  }
+};
+
+struct MemberExpression final : ASTNode {
+  std::unique_ptr<Expression> base;
+  std::string member;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::MemberExpression;
+  }
+};
+
+struct CallExpression final : ASTNode {
+  std::unique_ptr<Expression> callee;
+  std::vector<std::unique_ptr<Expression>> arguments;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::CallExpression;
+  }
+};
+
+struct Expression final : ASTNode {
+  std::variant<
+      IdentifierExpression,
+      LiteralExpression,
+      BinaryExpression,
+      UnaryExpression,
+      AssignmentExpression,
+      MemberExpression,
+      CallExpression> value;
+
+  NodeKind kind() const noexcept override {
+    return std::visit(
+        [](const auto& node) { return node.kind(); },
+        value);
+  }
+};
+
+struct Parameter final : ASTNode {
+  std::string name;
+  std::string type;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::Parameter;
+  }
+};
+
+struct Block final : ASTNode {
+  std::vector<std::unique_ptr<Statement>> statements;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::Block;
+  }
+};
+
+struct VariableDeclaration final : ASTNode {
+  bool isConst = false;
+  std::string name;
+  std::string type;
+  std::unique_ptr<Expression> initializer;
+
+  NodeKind kind() const noexcept override {
+    return isConst ? NodeKind::ConstDeclaration
+                   : NodeKind::VariableDeclaration;
+  }
+};
+
+struct FunctionDeclaration final : ASTNode {
+  std::string name;
+  std::string callingName;
+  std::vector<std::unique_ptr<Parameter>> parameters;
+  std::string returnType;
+  std::unique_ptr<Block> body;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::FunctionDeclaration;
+  }
+};
+
+struct ImportDeclaration final : ASTNode {
+  std::string module;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::ImportDeclaration;
+  }
+};
+
+struct StructDeclaration final : ASTNode {
+  std::string name;
+  std::vector<std::unique_ptr<VariableDeclaration>> variables;
+  std::vector<std::unique_ptr<FunctionDeclaration>> functions;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::StructDeclaration;
+  }
+};
+
+struct IfStatement final : ASTNode {
+  std::unique_ptr<Expression> condition;
+  std::unique_ptr<Block> thenBlock;
+  std::unique_ptr<Block> elseBlock;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::IfStatement;
+  }
+};
+
+struct WhileStatement final : ASTNode {
+  std::unique_ptr<Expression> condition;
+  std::unique_ptr<Block> body;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::WhileStatement;
+  }
+};
+
+struct RepeatStatement final : ASTNode {
+  std::unique_ptr<Block> body;
+  std::unique_ptr<Expression> condition;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::RepeatStatement;
+  }
+};
+
+struct ForStatement final : ASTNode {
+  std::string variable;
+  std::unique_ptr<Expression> sequence;
+  std::unique_ptr<Block> body;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::ForStatement;
+  }
+};
+
+struct ReturnStatement final : ASTNode {
+  std::unique_ptr<Expression> value;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::ReturnStatement;
+  }
+};
+
+struct DeferStatement final : ASTNode {
+  std::unique_ptr<Block> body;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::DeferStatement;
+  }
+};
+
+struct ExpressionStatement final : ASTNode {
+  std::unique_ptr<Expression> expression;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::ExpressionStatement;
+  }
+};
+
+struct Statement final {
+  std::variant<
+      VariableDeclaration,
+      FunctionDeclaration,
+      StructDeclaration,
+      IfStatement,
+      WhileStatement,
+      RepeatStatement,
+      ForStatement,
+      ReturnStatement,
+      DeferStatement,
+      ExpressionStatement> value;
+};
+
+struct Program final : ASTNode {
+  std::vector<std::unique_ptr<ImportDeclaration>> imports;
+  std::vector<std::unique_ptr<StructDeclaration>> structs;
+  std::vector<std::unique_ptr<FunctionDeclaration>> functions;
+  std::vector<std::unique_ptr<Statement>> statements;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::Program;
+  }
+};
+
+class Parser final {
+public:
+  explicit Parser(std::string_view source);
+
+  std::unique_ptr<Program> parse();
+
+  const std::vector<Diagnostic>& diagnostics() const noexcept;
+  bool hasErrors() const noexcept;
+
+private:
+  lexer::Lexer lexer_;
+  std::vector<Diagnostic> diagnostics_;
+
+  std::vector<std::string> callingNames_;
+  std::vector<std::string> functionNames_;
+  std::vector<std::string> structNames_;
+
+  Token current_{};
+  Token previous_{};
+  bool hasCurrent_ = false;
+
+  void advance();
+  Token peek() const;
+  bool check(TokenKind kind) const;
+  bool match(TokenKind kind);
+  bool expect(TokenKind kind, std::string_view message);
+
+  void error(const Token& token, std::string_view message);
+  void synchronize();
+
+  std::unique_ptr<ImportDeclaration> parseImport();
+  std::unique_ptr<StructDeclaration> parseStruct();
+  std::unique_ptr<FunctionDeclaration> parseFunction();
+  std::unique_ptr<Statement> parseStatement();
+
+  std::unique_ptr<VariableDeclaration> parseVariable(bool isConst);
+  std::unique_ptr<IfStatement> parseIf();
+  std::unique_ptr<WhileStatement> parseWhile();
+  std::unique_ptr<RepeatStatement> parseRepeat();
+  std::unique_ptr<ForStatement> parseFor();
+  std::unique_ptr<ReturnStatement> parseReturn();
+  std::unique_ptr<DeferStatement> parseDefer();
+  std::unique_ptr<ExpressionStatement> parseExpressionStatement();
+
+  std::unique_ptr<Block> parseBlock();
+  std::unique_ptr<Expression> parseExpression();
+  std::unique_ptr<Expression> parseAssignment();
+  std::unique_ptr<Expression> parseLogicalOr();
+  std::unique_ptr<Expression> parseLogicalAnd();
+  std::unique_ptr<Expression> parseEquality();
+  std::unique_ptr<Expression> parseComparison();
+  std::unique_ptr<Expression> parseTerm();
+  std::unique_ptr<Expression> parseFactor();
+  std::unique_ptr<Expression> parseUnary();
+  std::unique_ptr<Expression> parsePostfix();
+  std::unique_ptr<Expression> parsePrimary();
+
+  std::string parseTypeName();
+  std::string parseIdentifier(std::string_view context);
+  std::string parseCallingName();
+  std::string tokenText(const Token& token) const;
+
+  bool isExpressionStart(TokenKind kind) const noexcept;
+  bool isStatementStart(TokenKind kind) const noexcept;
+  bool isTypeToken(TokenKind kind) const noexcept;
+  bool isAssignmentOperator(TokenKind kind) const noexcept;
+
+  static int precedence(TokenKind kind) noexcept;
+  static std::string operatorText(TokenKind kind);
+  static bool containsName(
+      const std::vector<std::string>& names,
+      std::string_view name) noexcept;
+};
+
+} // namespace sift::parse
+
+#endif
