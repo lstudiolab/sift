@@ -77,11 +77,16 @@ bool isTypeToken(TokenKind kind) noexcept {
 }
 
 bool isUnaryOperator(TokenKind kind) noexcept {
-  return kind == TokenKind::Bang ||
-         kind == TokenKind::Minus ||
-         kind == TokenKind::Plus ||
-         kind == TokenKind::KeywordError ||
-         kind == TokenKind::KeywordPanic;
+  switch (kind) {
+    case TokenKind::Bang:
+    case TokenKind::Minus:
+    case TokenKind::Plus:
+    case TokenKind::KeywordError:
+    case TokenKind::KeywordPanic:
+      return true;
+    default:
+      return false;
+  }
 }
 
 } // namespace
@@ -217,22 +222,32 @@ std::unique_ptr<Program> Parser::parse() {
       continue;
     }
 
+    const Token before = current_;
+
     switch (current_.kind) {
       case TokenKind::KeywordImport:
         program->imports.push_back(parseImport());
-        continue;
+        break;
 
       case TokenKind::KeywordStruct:
         program->structs.push_back(parseStruct());
-        continue;
+        break;
 
       case TokenKind::KeywordFunction:
         program->functions.push_back(parseFunction());
-        continue;
+        break;
 
       default:
-        program->statements.push_back(parseStatement());
-        continue;
+        if (auto statement = parseStatement()) {
+          program->statements.push_back(std::move(statement));
+        }
+        break;
+    }
+
+    if (current_.start == before.start &&
+        current_.kind == before.kind) {
+      error(current_, "parser made no progress while parsing the program");
+      advance();
     }
   }
 
@@ -302,7 +317,13 @@ std::unique_ptr<StructDeclaration> Parser::parseStruct() {
     }
 
     error(current_, "only var, const, and function declarations are allowed in a Sift struct");
+    const Token before = current_;
     synchronize();
+
+    if (current_.start == before.start &&
+        current_.kind == before.kind) {
+      advance();
+    }
   }
 
   expect(TokenKind::RightBrace, "expected '}' after struct declaration");
@@ -641,7 +662,13 @@ std::unique_ptr<SwitchStatement> Parser::parseSwitch() {
     const bool isDefault = check(TokenKind::KeywordDefat);
     if (!isCase && !isDefault) {
       error(current_, "expected 'case' or 'defat' in switch");
+      const Token before = current_;
       synchronize();
+
+      if (current_.start == before.start &&
+          current_.kind == before.kind) {
+        advance();
+      }
       continue;
     }
 
@@ -1005,12 +1032,17 @@ std::string Parser::tokenText(const Token& token) const {
 }
 
 bool Parser::isAssignmentOperator(TokenKind kind) const noexcept {
-  return kind == TokenKind::Equal ||
-         kind == TokenKind::PlusEqual ||
-         kind == TokenKind::MinusEqual ||
-         kind == TokenKind::StarEqual ||
-         kind == TokenKind::SlashEqual ||
-         kind == TokenKind::PercentEqual;
+  switch (kind) {
+    case TokenKind::Equal:
+    case TokenKind::PlusEqual:
+    case TokenKind::MinusEqual:
+    case TokenKind::StarEqual:
+    case TokenKind::SlashEqual:
+    case TokenKind::PercentEqual:
+      return true;
+    default:
+      return false;
+  }
 }
 
 std::string_view Parser::operatorText(TokenKind kind) noexcept {
