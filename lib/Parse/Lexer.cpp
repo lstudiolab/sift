@@ -1202,8 +1202,7 @@ void Lexer::beginToken() noexcept {
 Token Lexer::makeToken(
     TokenKind kind,
     const char* begin,
-    const char* end,
-    ) const noexcept {
+    const char* end) const noexcept {
   const std::size_t start =
       static_cast<std::size_t>(begin - source_.data());
   const std::size_t length =
