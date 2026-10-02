@@ -454,22 +454,32 @@ bool Lexer::consumeIf(char value) noexcept {
 }
 
 bool Lexer::consumeIf(std::string_view value) noexcept {
-  const std::size_t remaining =
-      static_cast<std::size_t>(cursor_.end - cursor_.current);
+  const std::size_t length =
+      value.size();
 
-  if (remaining < value.size()) {
+  const std::size_t remaining =
+      static_cast<std::size_t>(
+          cursor_.end - cursor_.current);
+
+  if (length > remaining) {
     return false;
   }
 
-  for (std::size_t index = 0; index < value.size(); ++index) {
-    if (cursor_.current[index] != value[index]) {
+  const char* current =
+      cursor_.current;
+
+  for (std::size_t index = 0;
+       index < length;
+       ++index) {
+    if (current[index] != value[index]) {
       return false;
     }
   }
 
-  cursor_.current += value.size();
-  cursor_.offset += value.size();
-  cursor_.column += value.size();
+  cursor_.current =
+      current + length;
+  cursor_.offset += length;
+  cursor_.column += length;
 
   return true;
 }
@@ -1884,7 +1894,8 @@ Token Lexer::lexOperatorOrPunctuation() {
     case '=':
       consumeChar();
 
-      if (consumeIf('=')) {
+      if (peekChar() == '=') {
+        consumeChar();
         return finish(TokenKind::EqualEqual);
       }
 
@@ -1893,7 +1904,8 @@ Token Lexer::lexOperatorOrPunctuation() {
     case '!':
       consumeChar();
 
-      if (consumeIf('=')) {
+      if (peekChar() == '=') {
+        consumeChar();
         return finish(TokenKind::BangEqual);
       }
 
@@ -1902,11 +1914,13 @@ Token Lexer::lexOperatorOrPunctuation() {
     case '+':
       consumeChar();
 
-      if (consumeIf('=')) {
+      if (peekChar() == '=') {
+        consumeChar();
         return finish(TokenKind::PlusEqual);
       }
 
-      if (consumeIf('+')) {
+      if (peekChar() == '+') {
+        consumeChar();
         return finish(TokenKind::PlusPlus);
       }
 
@@ -1915,15 +1929,18 @@ Token Lexer::lexOperatorOrPunctuation() {
     case '-':
       consumeChar();
 
-      if (consumeIf('=')) {
+      if (peekChar() == '=') {
+        consumeChar();
         return finish(TokenKind::MinusEqual);
       }
 
-      if (consumeIf('-')) {
+      if (peekChar() == '-') {
+        consumeChar();
         return finish(TokenKind::MinusMinus);
       }
 
-      if (consumeIf('>')) {
+      if (peekChar() == '>') {
+        consumeChar();
         return finish(TokenKind::Arrow);
       }
 
@@ -2131,10 +2148,15 @@ Token Lexer::lexImpl() {
       continue;
     }
 
-    if (detail::isPotentialComment(
+    // Slash is checked before the general operator path because it can
+    // begin either a comment or a slash token. Keeping this branch early
+    // avoids entering the larger punctuation/operator switch for comments.
+    if (current == '/' &&
+        detail::isPotentialComment(
             cursor_.current,
             cursor_.end)) {
-      Token token = lexCommentOrSlash();
+      Token token =
+          lexCommentOrSlash();
 
       if (!options_.retainComments) {
         continue;
