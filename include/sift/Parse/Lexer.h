@@ -147,6 +147,7 @@ public:
   bool atEnd() const noexcept;
   std::size_t offset() const noexcept;
   SourceLocation location() const noexcept;
+  SourceLocation locationAt(std::size_t offset) const noexcept;
 
   const std::vector<Diagnostic>& diagnostics() const noexcept;
   bool hasErrors() const noexcept;
@@ -169,6 +170,7 @@ private:
   bool afterFunctionKeyword_ = false;
   bool sawFunctionName_ = false;
   bool lastWasDot_ = false;
+  bool identifierContainsNonASCII_ = false;
 
   struct LexState {
     LexerCursor cursor;
