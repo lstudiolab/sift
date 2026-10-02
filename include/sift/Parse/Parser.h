@@ -349,6 +349,11 @@ private:
   Token current_{};
   Token previous_{};
 
+  // Parser context used for structural control-flow validation.
+  std::size_t functionDepth_ = 0;
+  std::size_t loopDepth_ = 0;
+  std::size_t switchDepth_ = 0;
+
   void advance();
   bool check(TokenKind kind) const;
   bool match(TokenKind kind);
@@ -373,6 +378,10 @@ private:
   std::unique_ptr<BreakStatement> parseBreak();
   std::unique_ptr<ContinueStatement> parseContinue();
   std::unique_ptr<ExpressionStatement> parseExpressionStatement();
+
+  bool canBreak() const noexcept;
+  bool canContinue() const noexcept;
+  bool canReturn() const noexcept;
 
   std::unique_ptr<Block> parseBlock();
   std::unique_ptr<Expression> parseExpression();
