@@ -2080,7 +2080,6 @@ void Lexer::consumeDigits(unsigned base) {
         locationAt(tokenStart_.offset + separatorOffset),
         "invalid numeric separator");
   }
-  }
 }
 
 // Consume and validate one string or character escape.
@@ -2568,7 +2567,7 @@ Token Lexer::lexString() {
 Token Lexer::lexCharacter() {
   beginToken();
 
-  const const SourceLocation start =
+  const SourceLocation start =
       locationAt(tokenStart_.offset);
 
   consumeChar();
