@@ -883,6 +883,7 @@ std::unique_ptr<ImportDeclaration> Parser::parseImport() {
 }
 
 std::unique_ptr<StructDeclaration> Parser::parseStruct() {
+  const std::string access = parseAccessModifier();
   const Token start = current_;
   advance();
 
@@ -890,6 +891,7 @@ std::unique_ptr<StructDeclaration> Parser::parseStruct() {
   node->variables.reserve(8);
   node->functions.reserve(8);
   node->location = SourceLocation{start.start, 0u, 0u};
+  node->accessModifier = access;
   node->name = parseIdentifier("struct name");
 
   if (!expect(TokenKind::LeftBrace, "expected '{' after struct name")) {
@@ -910,6 +912,27 @@ std::unique_ptr<StructDeclaration> Parser::parseStruct() {
       // this rejected declaration keyword so recovery can make progress.
       advance();
       synchronize();
+      continue;
+    }
+
+    if (isAccessModifier(current_.kind)) {
+      const std::string access = parseAccessModifier();
+
+      if (check(TokenKind::KeywordVar) || check(TokenKind::KeywordConst)) {
+        auto member = parseVariable(check(TokenKind::KeywordConst));
+        member->accessModifier = access;
+        node->variables.push_back(std::move(member));
+        continue;
+      }
+
+      if (check(TokenKind::KeywordFunction)) {
+        auto function = parseFunction();
+        function->accessModifier = access;
+        node->functions.push_back(std::move(function));
+        continue;
+      }
+
+      error(current_, "access modifier must precede a struct member declaration");
       continue;
     }
 
@@ -977,6 +1000,23 @@ std::unique_ptr<ClassDeclaration> Parser::parseClass() {
 
   while (!check(TokenKind::RightBrace) && !check(TokenKind::EndOfFile)) {
     if (match(TokenKind::Semicolon) || match(TokenKind::Comment)) continue;
+    if (isAccessModifier(current_.kind)) {
+      const std::string memberAccess = parseAccessModifier();
+      if (check(TokenKind::KeywordVar) || check(TokenKind::KeywordConst)) {
+        auto member = parseVariable(check(TokenKind::KeywordConst));
+        member->accessModifier = memberAccess;
+        node->variables.push_back(std::move(member));
+        continue;
+      }
+      if (check(TokenKind::KeywordFunction)) {
+        auto function = parseFunction();
+        function->accessModifier = memberAccess;
+        node->functions.push_back(std::move(function));
+        continue;
+      }
+      error(current_, "access modifier must precede a class member declaration");
+      continue;
+    }
     if (check(TokenKind::KeywordVar) || check(TokenKind::KeywordConst)) {
       node->variables.push_back(parseVariable(check(TokenKind::KeywordConst)));
       continue;
