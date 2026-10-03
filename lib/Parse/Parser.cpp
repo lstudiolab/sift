@@ -2271,6 +2271,17 @@ std::string Parser::parseTypeName() {
   return type;
 }
 
+std::string Parser::parseIdentifier(std::string_view context) {
+  if (!isNameToken(current_.kind)) {
+    error(current_, std::string("expected ") + std::string(context));
+    return {};
+  }
+
+  const std::string value = tokenText(current_);
+  advance();
+  return value;
+}
+
 std::string Parser::parseCallingName() {
   if (!isNameToken(current_.kind)) {
     error(current_, "expected the single calling name inside function parentheses");
