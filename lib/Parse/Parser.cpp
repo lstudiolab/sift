@@ -1,8 +1,14 @@
 #include "sift/Parse/Parser.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <condition_variable>
+#include <cstdint>
 #include <exception>
+#include <memory>
+#include <mutex>
+#include <new>
 #include <thread>
 #include <functional>
 #include <iterator>
@@ -13,7 +19,305 @@ namespace sift::parse {
 
 namespace {
 
-// Fast token-category predicates keep grammar dispatch branch-light.
+class ASTArena final {
+public:
+  static constexpr std::size_t blockSize = 64u * 1024u;
+
+  void* allocate(std::size_t size) {
+    const std::size_t alignment = alignof(std::max_align_t);
+    const std::size_t alignedSize =
+        (size + alignment - 1u) & ~(alignment - 1u);
+
+    if (blocks_.empty() ||
+        offset_ + alignedSize > blockSize) {
+      const std::size_t allocationSize =
+          std::max(blockSize, alignedSize);
+      blocks_.push_back(
+          std::make_unique<std::byte[]>(allocationSize));
+      offset_ = 0;
+    }
+
+    void* result = blocks_.back().get() + offset_;
+    offset_ += alignedSize;
+    return result;
+  }
+
+private:
+  std::vector<std::unique_ptr<std::byte[]>> blocks_;
+  std::size_t offset_ = 0;
+};
+
+thread_local ASTArena* activeASTArena = nullptr;
+
+class ASTArenaScope final {
+public:
+  explicit ASTArenaScope(ASTArena* arena) noexcept
+      : previous_(activeASTArena) {
+    activeASTArena = arena;
+  }
+
+  ~ASTArenaScope() {
+    activeASTArena = previous_;
+  }
+
+  ASTArenaScope(const ASTArenaScope&) = delete;
+  ASTArenaScope& operator=(const ASTArenaScope&) = delete;
+
+private:
+  ASTArena* previous_;
+};
+
+struct alignas(std::max_align_t) ASTAllocationHeader {
+  ASTArena* arena = nullptr;
+  std::uint64_t magic = 0;
+};
+
+constexpr std::uint64_t kASTAllocationMagic =
+    0x534946544152454Eull;
+
+enum ParserTokenFlag : std::uint8_t {
+  TokenFlagDeclaration = 1u << 0,
+  TokenFlagControl = 1u << 1,
+  TokenFlagContextualName = 1u << 2,
+  TokenFlagAccess = 1u << 3,
+  TokenFlagType = 1u << 4,
+  TokenFlagUnary = 1u << 5
+};
+
+constexpr auto makeTokenFlags() {
+  constexpr std::size_t count =
+      static_cast<std::size_t>(TokenKind::Newline) + 1u;
+
+  std::array<std::uint8_t, count> flags{};
+
+  const auto add = [&flags](TokenKind kind, std::uint8_t flag) constexpr {
+    flags[static_cast<std::size_t>(kind)] |= flag;
+  };
+
+  for (TokenKind kind : {
+           TokenKind::KeywordVar, TokenKind::KeywordConst,
+           TokenKind::KeywordFunction, TokenKind::KeywordStruct,
+           TokenKind::KeywordClass, TokenKind::KeywordEnum,
+           TokenKind::KeywordProtocol, TokenKind::KeywordExtension,
+           TokenKind::KeywordPublic, TokenKind::KeywordPrivate,
+           TokenKind::KeywordProtect, TokenKind::KeywordStatic,
+           TokenKind::KeywordFinal, TokenKind::KeywordOpen,
+           TokenKind::KeywordRequired}) {
+    add(kind, TokenFlagDeclaration);
+  }
+
+  for (TokenKind kind : {
+           TokenKind::KeywordIf, TokenKind::KeywordWhile,
+           TokenKind::KeywordRepeat, TokenKind::KeywordFor,
+           TokenKind::KeywordReturn, TokenKind::KeywordDefer,
+           TokenKind::KeywordSwitch, TokenKind::KeywordBreak,
+           TokenKind::KeywordContinue, TokenKind::KeywordGuard,
+           TokenKind::KeywordLoop, TokenKind::KeywordDo,
+           TokenKind::KeywordThrow, TokenKind::KeywordTry}) {
+    add(kind, TokenFlagControl);
+  }
+
+  for (TokenKind kind : {
+           TokenKind::KeywordData, TokenKind::KeywordMin,
+           TokenKind::KeywordMax, TokenKind::KeywordOutput,
+           TokenKind::KeywordMessage, TokenKind::KeywordMath,
+           TokenKind::KeywordAbs, TokenKind::KeywordGetData,
+           TokenKind::KeywordCreateData, TokenKind::KeywordControl,
+           TokenKind::KeywordConnect, TokenKind::KeywordBackup,
+           TokenKind::KeywordBinary, TokenKind::KeywordKernel,
+           TokenKind::KeywordOS, TokenKind::KeywordDelete,
+           TokenKind::KeywordDestroy, TokenKind::KeywordError,
+           TokenKind::KeywordPanic, TokenKind::KeywordFile,
+           TokenKind::KeywordFileID, TokenKind::KeywordAPI,
+           TokenKind::KeywordRepo, TokenKind::KeywordWebLink,
+           TokenKind::KeywordDatabase, TokenKind::KeywordSection,
+           TokenKind::KeywordImport}) {
+    add(kind, TokenFlagContextualName);
+  }
+
+  for (TokenKind kind : {
+           TokenKind::KeywordPublic, TokenKind::KeywordPrivate,
+           TokenKind::KeywordProtect, TokenKind::KeywordStatic,
+           TokenKind::KeywordFinal, TokenKind::KeywordOpen,
+           TokenKind::KeywordRequired}) {
+    add(kind, TokenFlagAccess);
+  }
+
+  for (TokenKind kind : {
+           TokenKind::Identifier, TokenKind::KeywordInt,
+           TokenKind::KeywordNum, TokenKind::KeywordString,
+           TokenKind::KeywordBool, TokenKind::KeywordBytes,
+           TokenKind::KeywordAny, TokenKind::KeywordSome}) {
+    add(kind, TokenFlagType);
+  }
+
+  for (TokenKind kind : {
+           TokenKind::Bang, TokenKind::Minus, TokenKind::Plus,
+           TokenKind::KeywordError, TokenKind::KeywordPanic}) {
+    add(kind, TokenFlagUnary);
+  }
+
+  return flags;
+}
+
+constexpr auto kTokenFlags = makeTokenFlags();
+
+inline bool hasTokenFlag(TokenKind kind, std::uint8_t flag) noexcept {
+  const std::size_t index = static_cast<std::size_t>(kind);
+  return index < kTokenFlags.size() &&
+         (kTokenFlags[index] & flag) != 0;
+}
+
+class ParserThreadPool final {
+public:
+  ParserThreadPool() {
+    unsigned int count = std::thread::hardware_concurrency();
+    if (count == 0) count = 1;
+
+    workers_.reserve(count);
+    for (unsigned int index = 0; index < count; ++index) {
+      workers_.emplace_back([this] { workerLoop(); });
+    }
+  }
+
+  ~ParserThreadPool() {
+    {
+      std::lock_guard lock(mutex_);
+      stopping_ = true;
+      ++generation_;
+    }
+    condition_.notify_all();
+
+    for (auto& worker : workers_) {
+      if (worker.joinable()) worker.join();
+    }
+  }
+
+  ParserThreadPool(const ParserThreadPool&) = delete;
+  ParserThreadPool& operator=(const ParserThreadPool&) = delete;
+
+  void run(
+      const Parser* parser,
+      const std::vector<Parser::PieceBoundary>& boundaries,
+      std::vector<Parser::PieceResult>& results) {
+    std::lock_guard runLock(runMutex_);
+    std::atomic<std::size_t> nextSequence{0};
+
+    {
+      std::lock_guard lock(mutex_);
+      parser_ = parser;
+      boundaries_ = &boundaries;
+      results_ = &results;
+      nextSequence_ = &nextSequence;
+      activeWorkers_ = workers_.size();
+      ++generation_;
+    }
+
+    condition_.notify_all();
+
+    std::unique_lock lock(mutex_);
+    completed_.wait(lock, [this] {
+      return activeWorkers_ == 0;
+    });
+
+    parser_ = nullptr;
+    boundaries_ = nullptr;
+    results_ = nullptr;
+    nextSequence_ = nullptr;
+  }
+
+private:
+  static constexpr std::size_t chunkSize = 32;
+
+  void workerLoop() {
+    std::size_t seenGeneration = 0;
+
+    while (true) {
+      const Parser* parser = nullptr;
+      const std::vector<Parser::PieceBoundary>* boundaries = nullptr;
+      std::vector<Parser::PieceResult>* results = nullptr;
+      std::atomic<std::size_t>* nextSequence = nullptr;
+
+      {
+        std::unique_lock lock(mutex_);
+        condition_.wait(lock, [this, &seenGeneration] {
+          return stopping_ || generation_ != seenGeneration;
+        });
+
+        if (stopping_) return;
+
+        seenGeneration = generation_;
+        parser = parser_;
+        boundaries = boundaries_;
+        results = results_;
+        nextSequence = nextSequence_;
+      }
+
+      while (true) {
+        const std::size_t first =
+            nextSequence->fetch_add(chunkSize, std::memory_order_relaxed);
+        if (first >= boundaries->size()) break;
+
+        const std::size_t last =
+            std::min(first + chunkSize, boundaries->size());
+
+        for (std::size_t sequence = first; sequence < last; ++sequence) {
+          try {
+            (*results)[sequence] =
+                parser->parsePiece(sequence, (*boundaries)[sequence]);
+          } catch (const std::exception&) {
+            Parser::PieceResult failed;
+            failed.sequence = sequence;
+            failed.boundary = (*boundaries)[sequence];
+            failed.hasErrors = true;
+            failed.diagnostics.push_back({
+                DiagnosticSeverity::Error,
+                parser->locationAt((*boundaries)[sequence].start),
+                "parser worker failed while parsing this piece"
+            });
+            (*results)[sequence] = std::move(failed);
+          } catch (...) {
+            Parser::PieceResult failed;
+            failed.sequence = sequence;
+            failed.boundary = (*boundaries)[sequence];
+            failed.hasErrors = true;
+            failed.diagnostics.push_back({
+                DiagnosticSeverity::Error,
+                parser->locationAt((*boundaries)[sequence].start),
+                "parser worker failed while parsing this piece"
+            });
+            (*results)[sequence] = std::move(failed);
+          }
+        }
+      }
+
+      {
+        std::lock_guard lock(mutex_);
+        if (--activeWorkers_ == 0) {
+          completed_.notify_one();
+        }
+      }
+    }
+  }
+
+  std::mutex runMutex_;
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  std::condition_variable completed_;
+  std::vector<std::thread> workers_;
+  const Parser* parser_ = nullptr;
+  const std::vector<Parser::PieceBoundary>* boundaries_ = nullptr;
+  std::vector<Parser::PieceResult>* results_ = nullptr;
+  std::atomic<std::size_t>* nextSequence_ = nullptr;
+  std::size_t generation_ = 0;
+  std::size_t activeWorkers_ = 0;
+  bool stopping_ = false;
+};
+
+ParserThreadPool& parserThreadPool() {
+  static ParserThreadPool pool;
+  return pool;
+}
 
 class DepthGuard final {
 public:
@@ -21,9 +325,7 @@ public:
     ++depth_;
   }
 
-  ~DepthGuard() {
-    --depth_;
-  }
+  ~DepthGuard() { --depth_; }
 
   DepthGuard(const DepthGuard&) = delete;
   DepthGuard& operator=(const DepthGuard&) = delete;
@@ -33,48 +335,11 @@ private:
 };
 
 bool isDeclarationKeyword(TokenKind kind) noexcept {
-  switch (kind) {
-    case TokenKind::KeywordVar:
-    case TokenKind::KeywordConst:
-    case TokenKind::KeywordFunction:
-    case TokenKind::KeywordStruct:
-    case TokenKind::KeywordClass:
-    case TokenKind::KeywordEnum:
-    case TokenKind::KeywordProtocol:
-    case TokenKind::KeywordExtension:
-    case TokenKind::KeywordPublic:
-    case TokenKind::KeywordPrivate:
-    case TokenKind::KeywordProtect:
-    case TokenKind::KeywordStatic:
-    case TokenKind::KeywordFinal:
-    case TokenKind::KeywordOpen:
-    case TokenKind::KeywordRequired:
-      return true;
-    default:
-      return false;
-  }
+  return hasTokenFlag(kind, TokenFlagDeclaration);
 }
 
 bool isControlKeyword(TokenKind kind) noexcept {
-  switch (kind) {
-    case TokenKind::KeywordIf:
-    case TokenKind::KeywordWhile:
-    case TokenKind::KeywordRepeat:
-    case TokenKind::KeywordFor:
-    case TokenKind::KeywordReturn:
-    case TokenKind::KeywordDefer:
-    case TokenKind::KeywordSwitch:
-    case TokenKind::KeywordBreak:
-    case TokenKind::KeywordContinue:
-    case TokenKind::KeywordGuard:
-    case TokenKind::KeywordLoop:
-    case TokenKind::KeywordDo:
-    case TokenKind::KeywordThrow:
-    case TokenKind::KeywordTry:
-      return true;
-    default:
-      return false;
-  }
+  return hasTokenFlag(kind, TokenFlagControl);
 }
 
 bool isAssignableExpression(const Expression* expression) noexcept {
@@ -84,38 +349,7 @@ bool isAssignableExpression(const Expression* expression) noexcept {
 }
 
 bool isContextualNameToken(TokenKind kind) noexcept {
-  switch (kind) {
-    case TokenKind::KeywordData:
-    case TokenKind::KeywordMin:
-    case TokenKind::KeywordMax:
-    case TokenKind::KeywordOutput:
-    case TokenKind::KeywordMessage:
-    case TokenKind::KeywordMath:
-    case TokenKind::KeywordAbs:
-    case TokenKind::KeywordGetData:
-    case TokenKind::KeywordCreateData:
-    case TokenKind::KeywordControl:
-    case TokenKind::KeywordConnect:
-    case TokenKind::KeywordBackup:
-    case TokenKind::KeywordBinary:
-    case TokenKind::KeywordKernel:
-    case TokenKind::KeywordOS:
-    case TokenKind::KeywordDelete:
-    case TokenKind::KeywordDestroy:
-    case TokenKind::KeywordError:
-    case TokenKind::KeywordPanic:
-    case TokenKind::KeywordFile:
-    case TokenKind::KeywordFileID:
-    case TokenKind::KeywordAPI:
-    case TokenKind::KeywordRepo:
-    case TokenKind::KeywordWebLink:
-    case TokenKind::KeywordDatabase:
-    case TokenKind::KeywordSection:
-    case TokenKind::KeywordImport:
-      return true;
-    default:
-      return false;
-  }
+  return hasTokenFlag(kind, TokenFlagContextualName);
 }
 
 bool isNameToken(TokenKind kind) noexcept {
@@ -125,50 +359,16 @@ bool isNameToken(TokenKind kind) noexcept {
 }
 
 bool isAccessModifier(TokenKind kind) noexcept {
-  switch (kind) {
-    case TokenKind::KeywordPublic:
-    case TokenKind::KeywordPrivate:
-    case TokenKind::KeywordProtect:
-    case TokenKind::KeywordStatic:
-    case TokenKind::KeywordFinal:
-    case TokenKind::KeywordOpen:
-    case TokenKind::KeywordRequired:
-      return true;
-    default:
-      return false;
-  }
+  return hasTokenFlag(kind, TokenFlagAccess);
 }
 
 bool isTypeToken(TokenKind kind) noexcept {
-  switch (kind) {
-    case TokenKind::Identifier:
-    case TokenKind::KeywordInt:
-    case TokenKind::KeywordNum:
-    case TokenKind::KeywordString:
-    case TokenKind::KeywordBool:
-    case TokenKind::KeywordBytes:
-    case TokenKind::KeywordAny:
-    case TokenKind::KeywordSome:
-      return true;
-    default:
-      return false;
-  }
+  return hasTokenFlag(kind, TokenFlagType);
 }
 
 bool isUnaryOperator(TokenKind kind) noexcept {
-  switch (kind) {
-    case TokenKind::Bang:
-    case TokenKind::Minus:
-    case TokenKind::Plus:
-    case TokenKind::KeywordError:
-    case TokenKind::KeywordPanic:
-      return true;
-    default:
-      return false;
-  }
-}
-
-} // namespace
+  return hasTokenFlag(kind, TokenFlagUnary);
+}} // namespace
 
 Parser::Parser(std::string_view source) : Parser(source, false) {}
 
