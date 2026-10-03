@@ -92,7 +92,7 @@ bool isUnaryOperator(TokenKind kind) noexcept {
 } // namespace
 
 Parser::Parser(std::string_view source)
-    : lexer_(source) {
+    : lexer_(source, lexer::LexerOptions{false}) {
   diagnostics_.reserve(32);
   callingNames_.reserve(32);
   functionNames_.reserve(32);
@@ -355,6 +355,9 @@ std::unique_ptr<StructDeclaration> Parser::parseStruct() {
 
     if (check(TokenKind::KeywordStruct)) {
       error(current_, "Sift does not allow a struct inside another struct");
+      // synchronize() intentionally stops at declaration keywords. Consume
+      // this rejected declaration keyword so recovery can make progress.
+      advance();
       synchronize();
       continue;
     }
@@ -556,6 +559,14 @@ std::unique_ptr<VariableDeclaration> Parser::parseVariable(bool isConst) {
 }
 
 std::unique_ptr<IfStatement> Parser::parseIf() {
+  if (statementDepth_ >= maxStatementDepth_) {
+    error(current_, "statement nesting exceeds parser limit");
+    synchronizeToBlockStart();
+    return nullptr;
+  }
+
+  DepthGuard statementScope(statementDepth_);
+
   const Token start = current_;
   advance();
 
@@ -783,6 +794,14 @@ std::unique_ptr<ExpressionStatement> Parser::parseExpressionStatement() {
 }
 
 std::unique_ptr<Block> Parser::parseBlock() {
+  if (statementDepth_ >= maxStatementDepth_) {
+    error(current_, "statement nesting exceeds parser limit");
+    synchronizeToBlockStart();
+    return nullptr;
+  }
+
+  DepthGuard statementScope(statementDepth_);
+
   auto node = std::make_unique<Block>();
   node->statements.reserve(8);
   node->location = lexer_.locationAt(current_.start);
