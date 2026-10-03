@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <exception>
 #include <thread>
 #include <functional>
 #include <iterator>
