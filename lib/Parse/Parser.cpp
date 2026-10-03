@@ -102,12 +102,15 @@ Parser::Parser(std::string_view source) : Parser(source, false) {}
 Parser::Parser(std::string_view source, bool pieceMode)
     : lexer_(source, lexer::LexerOptions{false}),
       source_(source),
-      pieceMode_(pieceMode) {
-  lineStarts_.reserve(64);
-  lineStarts_.push_back(0);
+      pieceMode_(pieceMode),
+      lineStarts_(std::make_shared<std::vector<std::size_t>>()) {
+  auto mutableLineStarts =
+      std::const_pointer_cast<std::vector<std::size_t>>(lineStarts_);
+  mutableLineStarts->reserve(64);
+  mutableLineStarts->push_back(0);
   for (std::size_t i = 0; i < source_.size(); ++i) {
     if (source_[i] == '\n') {
-      lineStarts_.push_back(i + 1);
+      mutableLineStarts->push_back(i + 1);
     }
   }
 
@@ -118,25 +121,20 @@ Parser::Parser(std::string_view source, bool pieceMode)
   advance();
 }
 
-Parser::Parser(std::string_view source,
-               std::shared_ptr<const std::vector<Token>> tokens,
-               std::size_t tokenBegin,
-               std::size_t tokenEnd)
+Parser::Parser(
+    std::string_view source,
+    std::shared_ptr<const std::vector<Token>> tokens,
+    std::shared_ptr<const std::vector<std::size_t>> lineStarts,
+    std::size_t tokenBegin,
+    std::size_t tokenEnd)
     : lexer_(source, lexer::LexerOptions{false}),
       source_(source),
       pieceMode_(true),
       tokenMode_(true),
       tokenBuffer_(std::move(tokens)),
       tokenCursor_(tokenBegin),
-      tokenEnd_(tokenEnd) {
-  lineStarts_.reserve(64);
-  lineStarts_.push_back(0);
-  for (std::size_t i = 0; i < source_.size(); ++i) {
-    if (source_[i] == '\n') {
-      lineStarts_.push_back(i + 1);
-    }
-  }
-
+      tokenEnd_(tokenEnd),
+      lineStarts_(std::move(lineStarts)) {
   diagnostics_.reserve(32);
   callingNames_.reserve(32);
   functionNames_.reserve(32);
@@ -160,22 +158,22 @@ SourceLocation Parser::locationAt(std::size_t offset) const noexcept {
   const std::size_t targetOffset =
       std::min(offset, source_.size());
 
-  if (lineStarts_.empty()) {
+  if (!lineStarts_ || lineStarts_->empty()) {
     return {targetOffset, 1, targetOffset + 1};
   }
 
   const auto iterator =
       std::upper_bound(
-          lineStarts_.begin(),
-          lineStarts_.end(),
+          lineStarts_->begin(),
+          lineStarts_->end(),
           targetOffset);
 
   const std::size_t lineIndex =
       static_cast<std::size_t>(
-          iterator - lineStarts_.begin() - 1);
+          iterator - lineStarts_->begin() - 1);
 
   const std::size_t lineStart =
-      lineStarts_[lineIndex];
+      (*lineStarts_)[lineIndex];
 
   return {
       targetOffset,
@@ -444,7 +442,12 @@ Parser::PieceResult Parser::parsePiece(std::size_t sequence, PieceBoundary bound
   PieceResult result;
   result.sequence = sequence;
   result.boundary = boundary;
-  Parser pieceParser(source_, tokenBuffer_, boundary.tokenBegin, boundary.tokenEnd);
+  Parser pieceParser(
+      source_,
+      tokenBuffer_,
+      lineStarts_,
+      boundary.tokenBegin,
+      boundary.tokenEnd);
   result.program = pieceParser.parse();
   result.diagnostics = pieceParser.diagnostics();
   result.hasErrors = pieceParser.hasErrors();
