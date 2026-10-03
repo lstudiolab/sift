@@ -37,6 +37,17 @@ bool isDeclarationKeyword(TokenKind kind) noexcept {
     case TokenKind::KeywordConst:
     case TokenKind::KeywordFunction:
     case TokenKind::KeywordStruct:
+    case TokenKind::KeywordClass:
+    case TokenKind::KeywordEnum:
+    case TokenKind::KeywordProtocol:
+    case TokenKind::KeywordExtension:
+    case TokenKind::KeywordPublic:
+    case TokenKind::KeywordPrivate:
+    case TokenKind::KeywordProtect:
+    case TokenKind::KeywordStatic:
+    case TokenKind::KeywordFinal:
+    case TokenKind::KeywordOpen:
+    case TokenKind::KeywordRequired:
       return true;
     default:
       return false;
@@ -54,6 +65,11 @@ bool isControlKeyword(TokenKind kind) noexcept {
     case TokenKind::KeywordSwitch:
     case TokenKind::KeywordBreak:
     case TokenKind::KeywordContinue:
+    case TokenKind::KeywordGuard:
+    case TokenKind::KeywordLoop:
+    case TokenKind::KeywordDo:
+    case TokenKind::KeywordThrow:
+    case TokenKind::KeywordTry:
       return true;
     default:
       return false;
@@ -64,6 +80,47 @@ bool isAssignableExpression(const Expression* expression) noexcept {
   if (expression == nullptr) return false;
   return expression->kind() == NodeKind::IdentifierExpression ||
          expression->kind() == NodeKind::MemberExpression;
+}
+
+bool isContextualNameToken(TokenKind kind) noexcept {
+  switch (kind) {
+    case TokenKind::KeywordData:
+    case TokenKind::KeywordMin:
+    case TokenKind::KeywordMax:
+    case TokenKind::KeywordOutput:
+    case TokenKind::KeywordMessage:
+    case TokenKind::KeywordMath:
+    case TokenKind::KeywordAbs:
+    case TokenKind::KeywordGetData:
+    case TokenKind::KeywordCreateData:
+    case TokenKind::KeywordControl:
+    case TokenKind::KeywordConnect:
+    case TokenKind::KeywordBackup:
+    case TokenKind::KeywordBinary:
+    case TokenKind::KeywordKernel:
+    case TokenKind::KeywordOS:
+    case TokenKind::KeywordDelete:
+    case TokenKind::KeywordDestroy:
+    case TokenKind::KeywordError:
+    case TokenKind::KeywordPanic:
+    case TokenKind::KeywordFile:
+    case TokenKind::KeywordFileID:
+    case TokenKind::KeywordAPI:
+    case TokenKind::KeywordRepo:
+    case TokenKind::KeywordWebLink:
+    case TokenKind::KeywordDatabase:
+    case TokenKind::KeywordSection:
+    case TokenKind::KeywordImport:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool isNameToken(TokenKind kind) noexcept {
+  return kind == TokenKind::Identifier ||
+         kind == TokenKind::CallingName ||
+         isContextualNameToken(kind);
 }
 
 bool isTypeToken(TokenKind kind) noexcept {
@@ -365,6 +422,14 @@ std::vector<Parser::PieceBoundary> Parser::findPieceBoundaries(
       case TokenKind::KeywordRepeat:
       case TokenKind::KeywordFor:
       case TokenKind::KeywordSwitch:
+      case TokenKind::KeywordClass:
+      case TokenKind::KeywordEnum:
+      case TokenKind::KeywordProtocol:
+      case TokenKind::KeywordExtension:
+      case TokenKind::KeywordGuard:
+      case TokenKind::KeywordLoop:
+      case TokenKind::KeywordDo:
+      case TokenKind::KeywordTry:
         return true;
       default:
         return false;
@@ -458,6 +523,10 @@ std::unique_ptr<Program> Parser::parse() {
   auto program = std::make_unique<Program>();
   program->imports.reserve(8);
   program->structs.reserve(8);
+  program->classes.reserve(4);
+  program->enums.reserve(4);
+  program->protocols.reserve(4);
+  program->extensions.reserve(4);
   program->functions.reserve(16);
   program->statements.reserve(32);
   program->location = SourceLocation{0u, 0u, 0u};
@@ -507,6 +576,10 @@ std::unique_ptr<Program> Parser::parse() {
     if (!result.program) continue;
     for (auto& import : result.program->imports) program->imports.push_back(std::move(import));
     for (auto& structure : result.program->structs) program->structs.push_back(std::move(structure));
+    for (auto& classNode : result.program->classes) program->classes.push_back(std::move(classNode));
+    for (auto& enumNode : result.program->enums) program->enums.push_back(std::move(enumNode));
+    for (auto& protocolNode : result.program->protocols) program->protocols.push_back(std::move(protocolNode));
+    for (auto& extensionNode : result.program->extensions) program->extensions.push_back(std::move(extensionNode));
     for (auto& function : result.program->functions) program->functions.push_back(std::move(function));
     for (auto& statement : result.program->statements) program->statements.push_back(std::move(statement));
     diagnostics_.insert(diagnostics_.end(),
@@ -541,6 +614,64 @@ std::unique_ptr<Program> Parser::parse() {
     }
   }
 
+  for (const auto& classNode : program->classes) {
+    if (!classNode->name.empty() &&
+        !structNames_.insert(classNode->name).second) {
+      addDiagnostic(locationAt(classNode->location.offset),
+                    "duplicate type name");
+    }
+    for (const auto& function : classNode->functions) {
+      if (!function->name.empty() &&
+          !functionNames_.insert(function->name).second) {
+        addDiagnostic(locationAt(function->location.offset),
+                      "duplicate function name");
+      }
+      if (!function->callingName.empty() &&
+          !callingNames_.insert(function->callingName).second) {
+        addDiagnostic(locationAt(function->location.offset),
+                      "duplicate function calling name");
+      }
+    }
+  }
+
+  for (const auto& enumNode : program->enums) {
+    if (!enumNode->name.empty() &&
+        !structNames_.insert(enumNode->name).second) {
+      addDiagnostic(locationAt(enumNode->location.offset),
+                    "duplicate type name");
+    }
+  }
+
+  for (const auto& protocolNode : program->protocols) {
+    if (!protocolNode->name.empty() &&
+        !structNames_.insert(protocolNode->name).second) {
+      addDiagnostic(locationAt(protocolNode->location.offset),
+                    "duplicate type name");
+    }
+    for (const auto& function : protocolNode->functions) {
+      if (!function->name.empty() &&
+          !functionNames_.insert(function->name).second) {
+        addDiagnostic(locationAt(function->location.offset),
+                      "duplicate function name");
+      }
+    }
+  }
+
+  for (const auto& extensionNode : program->extensions) {
+    for (const auto& function : extensionNode->functions) {
+      if (!function->name.empty() &&
+          !functionNames_.insert(function->name).second) {
+        addDiagnostic(locationAt(function->location.offset),
+                      "duplicate function name");
+      }
+      if (!function->callingName.empty() &&
+          !callingNames_.insert(function->callingName).second) {
+        addDiagnostic(locationAt(function->location.offset),
+                      "duplicate function calling name");
+      }
+    }
+  }
+
   for (const auto& function : program->functions) {
     if (!function->name.empty() &&
         !functionNames_.insert(function->name).second) {
@@ -566,6 +697,10 @@ std::unique_ptr<Program> Parser::parseSequentialProgram() {
   auto program = std::make_unique<Program>();
   program->imports.reserve(8);
   program->structs.reserve(8);
+  program->classes.reserve(4);
+  program->enums.reserve(4);
+  program->protocols.reserve(4);
+  program->extensions.reserve(4);
   program->functions.reserve(16);
   program->statements.reserve(32);
   program->location = SourceLocation{source_.empty() ? 0u : 0u, 0u, 0u};
@@ -587,6 +722,30 @@ std::unique_ptr<Program> Parser::parseSequentialProgram() {
       case TokenKind::KeywordStruct: {
         if (auto node = parseStruct()) {
           program->structs.push_back(std::move(node));
+        }
+        break;
+      }
+      case TokenKind::KeywordClass: {
+        if (auto node = parseClass()) {
+          program->classes.push_back(std::move(node));
+        }
+        break;
+      }
+      case TokenKind::KeywordEnum: {
+        if (auto node = parseEnum()) {
+          program->enums.push_back(std::move(node));
+        }
+        break;
+      }
+      case TokenKind::KeywordProtocol: {
+        if (auto node = parseProtocol()) {
+          program->protocols.push_back(std::move(node));
+        }
+        break;
+      }
+      case TokenKind::KeywordExtension: {
+        if (auto node = parseExtension()) {
+          program->extensions.push_back(std::move(node));
         }
         break;
       }
@@ -686,6 +845,176 @@ std::unique_ptr<StructDeclaration> Parser::parseStruct() {
   }
 
   expect(TokenKind::RightBrace, "expected '}' after struct declaration");
+  return node;
+}
+
+std::string Parser::parseAccessModifier() {
+  switch (current_.kind) {
+    case TokenKind::KeywordPublic:
+    case TokenKind::KeywordPrivate:
+    case TokenKind::KeywordProtect:
+    case TokenKind::KeywordStatic:
+    case TokenKind::KeywordFinal:
+    case TokenKind::KeywordOpen:
+    case TokenKind::KeywordRequired: {
+      const std::string value = tokenText(current_);
+      advance();
+      return value;
+    }
+    default:
+      return {};
+  }
+}
+
+std::unique_ptr<ClassDeclaration> Parser::parseClass() {
+  const std::string access = parseAccessModifier();
+  const Token start = current_;
+  if (!check(TokenKind::KeywordClass)) {
+    error(current_, "expected 'class'");
+    return nullptr;
+  }
+  advance();
+
+  auto node = std::make_unique<ClassDeclaration>();
+  node->location = SourceLocation{start.start, 0u, 0u};
+  node->accessModifier = access;
+  node->name = parseIdentifier("class name");
+  if (!expect(TokenKind::LeftBrace, "expected '{' after class name")) {
+    synchronizeToBlockStart();
+    return node;
+  }
+
+  while (!check(TokenKind::RightBrace) && !check(TokenKind::EndOfFile)) {
+    if (match(TokenKind::Semicolon) || match(TokenKind::Comment)) continue;
+    if (check(TokenKind::KeywordVar) || check(TokenKind::KeywordConst)) {
+      node->variables.push_back(parseVariable(check(TokenKind::KeywordConst)));
+      continue;
+    }
+    if (check(TokenKind::KeywordFunction)) {
+      node->functions.push_back(parseFunction());
+      continue;
+    }
+    error(current_, "class body only permits var, const, and function declarations");
+    const Token before = current_;
+    synchronize();
+    if (current_.start == before.start && current_.kind == before.kind) advance();
+  }
+
+  expect(TokenKind::RightBrace, "expected '}' after class declaration");
+  return node;
+}
+
+std::unique_ptr<EnumDeclaration> Parser::parseEnum() {
+  const std::string access = parseAccessModifier();
+  const Token start = current_;
+  if (!check(TokenKind::KeywordEnum)) {
+    error(current_, "expected 'enum'");
+    return nullptr;
+  }
+  advance();
+
+  auto node = std::make_unique<EnumDeclaration>();
+  node->location = SourceLocation{start.start, 0u, 0u};
+  node->accessModifier = access;
+  node->name = parseIdentifier("enum name");
+
+  if (!expect(TokenKind::LeftBrace, "expected '{' after enum name")) {
+    synchronizeToBlockStart();
+    return node;
+  }
+
+  while (!check(TokenKind::RightBrace) && !check(TokenKind::EndOfFile)) {
+    if (match(TokenKind::Comma) || match(TokenKind::Semicolon) || match(TokenKind::Comment)) continue;
+    if (!match(TokenKind::KeywordCase)) {
+      error(current_, "expected 'case' in enum");
+      const Token before = current_;
+      synchronize();
+      if (current_.start == before.start && current_.kind == before.kind) advance();
+      continue;
+    }
+    if (!isNameToken(current_.kind)) {
+      error(current_, "expected enum case name");
+      synchronize();
+      continue;
+    }
+    node->cases.push_back(tokenText(current_));
+    advance();
+    if (match(TokenKind::Colon)) {
+      parseTypeName();
+    }
+  }
+
+  expect(TokenKind::RightBrace, "expected '}' after enum declaration");
+  return node;
+}
+
+std::unique_ptr<ProtocolDeclaration> Parser::parseProtocol() {
+  const std::string access = parseAccessModifier();
+  const Token start = current_;
+  if (!check(TokenKind::KeywordProtocol)) {
+    error(current_, "expected 'protocol'");
+    return nullptr;
+  }
+  advance();
+
+  auto node = std::make_unique<ProtocolDeclaration>();
+  node->location = SourceLocation{start.start, 0u, 0u};
+  node->accessModifier = access;
+  node->name = parseIdentifier("protocol name");
+
+  if (!expect(TokenKind::LeftBrace, "expected '{' after protocol name")) {
+    synchronizeToBlockStart();
+    return node;
+  }
+
+  while (!check(TokenKind::RightBrace) && !check(TokenKind::EndOfFile)) {
+    if (match(TokenKind::Semicolon) || match(TokenKind::Comment)) continue;
+    if (check(TokenKind::KeywordFunction)) {
+      node->functions.push_back(parseFunction());
+      continue;
+    }
+    error(current_, "protocol body only permits function declarations");
+    const Token before = current_;
+    synchronize();
+    if (current_.start == before.start && current_.kind == before.kind) advance();
+  }
+
+  expect(TokenKind::RightBrace, "expected '}' after protocol declaration");
+  return node;
+}
+
+std::unique_ptr<ExtensionDeclaration> Parser::parseExtension() {
+  const std::string access = parseAccessModifier();
+  const Token start = current_;
+  if (!check(TokenKind::KeywordExtension)) {
+    error(current_, "expected 'extension'");
+    return nullptr;
+  }
+  advance();
+
+  auto node = std::make_unique<ExtensionDeclaration>();
+  node->location = SourceLocation{start.start, 0u, 0u};
+  node->accessModifier = access;
+  node->target = parseIdentifier("extension target");
+
+  if (!expect(TokenKind::LeftBrace, "expected '{' after extension target")) {
+    synchronizeToBlockStart();
+    return node;
+  }
+
+  while (!check(TokenKind::RightBrace) && !check(TokenKind::EndOfFile)) {
+    if (match(TokenKind::Semicolon) || match(TokenKind::Comment)) continue;
+    if (check(TokenKind::KeywordFunction)) {
+      node->functions.push_back(parseFunction());
+      continue;
+    }
+    error(current_, "extension body only permits function declarations");
+    const Token before = current_;
+    synchronize();
+    if (current_.start == before.start && current_.kind == before.kind) advance();
+  }
+
+  expect(TokenKind::RightBrace, "expected '}' after extension declaration");
   return node;
 }
 
@@ -802,6 +1131,51 @@ std::unique_ptr<Statement> Parser::parseStatement() {
       break;
     case TokenKind::KeywordStruct:
       if (auto parsed = parseStruct()) {
+        node->value = std::move(*parsed);
+      }
+      break;
+    case TokenKind::KeywordClass:
+      if (auto parsed = parseClass()) {
+        node->value = std::move(*parsed);
+      }
+      break;
+    case TokenKind::KeywordEnum:
+      if (auto parsed = parseEnum()) {
+        node->value = std::move(*parsed);
+      }
+      break;
+    case TokenKind::KeywordProtocol:
+      if (auto parsed = parseProtocol()) {
+        node->value = std::move(*parsed);
+      }
+      break;
+    case TokenKind::KeywordExtension:
+      if (auto parsed = parseExtension()) {
+        node->value = std::move(*parsed);
+      }
+      break;
+    case TokenKind::KeywordGuard:
+      if (auto parsed = parseGuard()) {
+        node->value = std::move(*parsed);
+      }
+      break;
+    case TokenKind::KeywordLoop:
+      if (auto parsed = parseLoop()) {
+        node->value = std::move(*parsed);
+      }
+      break;
+    case TokenKind::KeywordDo:
+      if (auto parsed = parseDo()) {
+        node->value = std::move(*parsed);
+      }
+      break;
+    case TokenKind::KeywordThrow:
+      if (auto parsed = parseThrow()) {
+        node->value = std::move(*parsed);
+      }
+      break;
+    case TokenKind::KeywordTry:
+      if (auto parsed = parseTry()) {
         node->value = std::move(*parsed);
       }
       break;
