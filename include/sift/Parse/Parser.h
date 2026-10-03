@@ -216,6 +216,7 @@ struct Block final : ASTNode {
 };
 
 struct VariableDeclaration final : ASTNode {
+  std::string accessModifier;
   bool isConst = false;
   std::string name;
   std::string type;
@@ -228,6 +229,7 @@ struct VariableDeclaration final : ASTNode {
 };
 
 struct FunctionDeclaration final : ASTNode {
+  std::string accessModifier;
   std::string name;
   std::string callingName;
   std::vector<std::unique_ptr<Parameter>> parameters;
