@@ -897,6 +897,13 @@ std::unique_ptr<Expression> Parser::parseBinaryExpression(int minimumPrecedence)
     return left;
   }
 
+  // The overwhelmingly common expression is a single primary/postfix.
+  // Do not allocate temporary operator/value storage unless an operator
+  // is actually present.
+  if (binaryPrecedence(current_.kind) == 0) {
+    return left;
+  }
+
   std::vector<TokenKind> operators;
   std::vector<Token> operatorTokens;
   std::vector<std::unique_ptr<Expression>> values;
