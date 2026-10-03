@@ -1663,7 +1663,12 @@ std::unique_ptr<TryStatement> Parser::parseTry() {
 
   auto node = std::make_unique<TryStatement>();
   node->location = SourceLocation{start.start, 0u, 0u};
-  node->body = parseBlock();
+
+  if (check(TokenKind::LeftBrace)) {
+    node->body = parseBlock();
+  } else {
+    node->expression = parseExpression();
+  }
 
   while (match(TokenKind::KeywordCatch)) {
     auto clause = std::make_unique<CatchClause>();
@@ -1677,8 +1682,8 @@ std::unique_ptr<TryStatement> Parser::parseTry() {
     node->catches.push_back(std::move(clause));
   }
 
-  if (node->catches.empty()) {
-    error(current_, "try statement requires at least one catch clause");
+  if (node->catches.empty() && !node->expression) {
+    error(current_, "try statement requires a block or expression");
   }
 
   return node;
