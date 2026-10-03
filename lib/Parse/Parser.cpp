@@ -324,7 +324,7 @@ std::vector<Parser::PieceBoundary> Parser::findPieceBoundaries(
     const TokenKind previousKind = i == 0 ? TokenKind::Unknown : tokens[i - 1].kind;
     const bool topLevel = braceDepth == 0 && parenDepth == 0 && bracketDepth == 0;
 
-    if (topLevel && token.start > pieceStart && startsTopLevelPiece(token.kind) &&
+    if (topLevel && i > pieceStartToken && startsTopLevelPiece(token.kind) &&
         !(token.kind == TokenKind::KeywordIf && previousKind == TokenKind::KeywordElse) &&
         !(token.kind == TokenKind::KeywordWhile && pieceStartKind == TokenKind::KeywordRepeat)) {
       pieces.push_back({pieceStart, token.start, pieceStartToken, i});
@@ -402,11 +402,11 @@ std::unique_ptr<Program> Parser::parse() {
   program->structs.reserve(8);
   program->functions.reserve(16);
   program->statements.reserve(32);
-  program->location = source_.empty() ? SourceLocation{} : lexer_.locationAt(0);
+  program->location = SourceLocation{0u, 0u, 0u};
 
   lexer_.reset();
   auto tokens = std::make_shared<std::vector<Token>>();
-  tokens->reserve(source_.size() / 4u + 16u);
+  tokens->reserve(source_.size() / 6u + 16u);
   while (true) {
     Token token = lexer_.lex();
     tokens->push_back(token);
@@ -457,23 +457,6 @@ std::unique_ptr<Program> Parser::parse() {
     hasParserErrors_ = hasParserErrors_ || result.hasErrors;
   }
 
-  for (const auto& structure : program->structs) {
-    if (!structure->name.empty() && !structNames_.insert(structure->name).second)
-      addDiagnostic(structure->location, "duplicate struct name");
-    for (const auto& function : structure->functions) {
-      if (!function->name.empty() && !functionNames_.insert(function->name).second)
-        addDiagnostic(function->location, "duplicate function name");
-      if (!function->callingName.empty() && !callingNames_.insert(function->callingName).second)
-        addDiagnostic(function->location, "duplicate function calling name");
-    }
-  }
-  for (const auto& function : program->functions) {
-    if (!function->name.empty() && !functionNames_.insert(function->name).second)
-      addDiagnostic(function->location, "duplicate function name");
-    if (!function->callingName.empty() && !callingNames_.insert(function->callingName).second)
-      addDiagnostic(function->location, "duplicate function calling name");
-  }
-
   std::stable_sort(diagnostics_.begin(), diagnostics_.end(),
                    [](const Diagnostic& left, const Diagnostic& right) {
                      return left.location.offset < right.location.offset;
@@ -482,12 +465,63 @@ std::unique_ptr<Program> Parser::parse() {
 }
 
 std::unique_ptr<Program> Parser::parseSequentialProgram() {
+  auto program = std::make_unique<Program>();
+  program->imports.reserve(8);
+  program->structs.reserve(8);
+  program->functions.reserve(16);
+  program->statements.reserve(32);
+  program->location = SourceLocation{source_.empty() ? 0u : 0u, 0u, 0u};
+
+  while (!check(TokenKind::EndOfFile)) {
+    if (match(TokenKind::Semicolon) || match(TokenKind::Comment)) {
+      continue;
+    }
+
+    const Token before = current_;
+
+    switch (current_.kind) {
+      case TokenKind::KeywordImport: {
+        if (auto node = parseImport()) {
+          program->imports.push_back(std::move(node));
+        }
+        break;
+      }
+      case TokenKind::KeywordStruct: {
+        if (auto node = parseStruct()) {
+          program->structs.push_back(std::move(node));
+        }
+        break;
+      }
+      case TokenKind::KeywordFunction: {
+        if (auto node = parseFunction()) {
+          program->functions.push_back(std::move(node));
+        }
+        break;
+      }
+      default: {
+        if (auto node = parseStatement()) {
+          program->statements.push_back(std::move(node));
+        }
+        break;
+      }
+    }
+
+    if (current_.start == before.start &&
+        current_.kind == before.kind) {
+      error(current_, "parser made no progress while parsing the program");
+      advance();
+    }
+  }
+
+  return program;
+}
+
 std::unique_ptr<ImportDeclaration> Parser::parseImport() {
   const Token start = current_;
   advance();
 
   auto node = std::make_unique<ImportDeclaration>();
-  node->location = lexer_.locationAt(start.start);
+  node->location = SourceLocation{start.start, 0u, 0u};
 
   if (check(TokenKind::StringLiteral)) {
     node->module = tokenText(current_);
@@ -507,7 +541,7 @@ std::unique_ptr<StructDeclaration> Parser::parseStruct() {
   auto node = std::make_unique<StructDeclaration>();
   node->variables.reserve(8);
   node->functions.reserve(8);
-  node->location = lexer_.locationAt(start.start);
+  node->location = SourceLocation{start.start, 0u, 0u};
   node->name = parseIdentifier("struct name");
 
   if (!node->name.empty() &&
@@ -570,7 +604,7 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
 
   auto node = std::make_unique<FunctionDeclaration>();
   node->parameters.reserve(4);
-  node->location = lexer_.locationAt(start.start);
+  node->location = SourceLocation{start.start, 0u, 0u};
   node->name = parseIdentifier("function name");
 
   if (!node->name.empty() &&
@@ -703,7 +737,7 @@ std::unique_ptr<VariableDeclaration> Parser::parseVariable(bool isConst) {
   advance();
 
   auto node = std::make_unique<VariableDeclaration>();
-  node->location = lexer_.locationAt(start.start);
+  node->location = SourceLocation{start.start, 0u, 0u};
   node->isConst = isConst;
   node->name = parseIdentifier(isConst ? "const name" : "var name");
 
@@ -745,7 +779,7 @@ std::unique_ptr<IfStatement> Parser::parseIf() {
   advance();
 
   auto node = std::make_unique<IfStatement>();
-  node->location = lexer_.locationAt(start.start);
+  node->location = SourceLocation{start.start, 0u, 0u};
   node->condition = parseExpression();
   node->thenBlock = parseBlock();
 
@@ -773,7 +807,7 @@ std::unique_ptr<WhileStatement> Parser::parseWhile() {
   advance();
 
   auto node = std::make_unique<WhileStatement>();
-  node->location = lexer_.locationAt(start.start);
+  node->location = SourceLocation{start.start, 0u, 0u};
   node->condition = parseExpression();
 
   DepthGuard loopScope(loopDepth_);
@@ -787,7 +821,7 @@ std::unique_ptr<RepeatStatement> Parser::parseRepeat() {
   advance();
 
   auto node = std::make_unique<RepeatStatement>();
-  node->location = lexer_.locationAt(start.start);
+  node->location = SourceLocation{start.start, 0u, 0u};
 
   DepthGuard loopScope(loopDepth_);
   node->body = parseBlock();
@@ -806,7 +840,7 @@ std::unique_ptr<ForStatement> Parser::parseFor() {
   advance();
 
   auto node = std::make_unique<ForStatement>();
-  node->location = lexer_.locationAt(start.start);
+  node->location = SourceLocation{start.start, 0u, 0u};
   node->variable = parseIdentifier("for variable");
 
   if (!expect(TokenKind::KeywordIn, "expected 'in' in for statement")) {
@@ -827,7 +861,7 @@ std::unique_ptr<ReturnStatement> Parser::parseReturn() {
   advance();
 
   auto node = std::make_unique<ReturnStatement>();
-  node->location = lexer_.locationAt(start.start);
+  node->location = SourceLocation{start.start, 0u, 0u};
 
   if (!canReturn()) {
     error(start, "'return' is only valid inside a function");
@@ -848,7 +882,7 @@ std::unique_ptr<DeferStatement> Parser::parseDefer() {
   advance();
 
   auto node = std::make_unique<DeferStatement>();
-  node->location = lexer_.locationAt(start.start);
+  node->location = SourceLocation{start.start, 0u, 0u};
   node->body = parseBlock();
   return node;
 }
@@ -858,7 +892,7 @@ std::unique_ptr<BreakStatement> Parser::parseBreak() {
   advance();
 
   auto node = std::make_unique<BreakStatement>();
-  node->location = lexer_.locationAt(start.start);
+  node->location = SourceLocation{start.start, 0u, 0u};
 
   if (!canBreak()) {
     error(start, "'break' is only valid inside a loop or switch");
@@ -872,7 +906,7 @@ std::unique_ptr<ContinueStatement> Parser::parseContinue() {
   advance();
 
   auto node = std::make_unique<ContinueStatement>();
-  node->location = lexer_.locationAt(start.start);
+  node->location = SourceLocation{start.start, 0u, 0u};
 
   if (!canContinue()) {
     error(start, "'continue' is only valid inside a loop");
@@ -886,7 +920,7 @@ std::unique_ptr<SwitchStatement> Parser::parseSwitch() {
   advance();
 
   auto node = std::make_unique<SwitchStatement>();
-  node->location = lexer_.locationAt(start.start);
+  node->location = SourceLocation{start.start, 0u, 0u};
   node->cases.reserve(4);
   node->subject = parseExpression();
 
@@ -924,7 +958,7 @@ std::unique_ptr<SwitchStatement> Parser::parseSwitch() {
     advance();
 
     auto caseNode = std::make_unique<SwitchCase>();
-    caseNode->location = lexer_.locationAt(caseStart.start);
+    caseNode->location = SourceLocation{caseStart.start, 0u, 0u};
     caseNode->isDefault = isDefault;
 
     if (isDefault) {
@@ -956,7 +990,7 @@ std::unique_ptr<SwitchStatement> Parser::parseSwitch() {
 
 std::unique_ptr<ExpressionStatement> Parser::parseExpressionStatement() {
   auto node = std::make_unique<ExpressionStatement>();
-  node->location = lexer_.locationAt(current_.start);
+  node->location = SourceLocation{current_.start, 0u, 0u};
   node->expression = parseExpression();
 
   if (!node->expression) {
@@ -978,7 +1012,7 @@ std::unique_ptr<Block> Parser::parseBlock() {
 
   auto node = std::make_unique<Block>();
   node->statements.reserve(8);
-  node->location = lexer_.locationAt(current_.start);
+  node->location = SourceLocation{current_.start, 0u, 0u};
 
   if (!expect(TokenKind::LeftBrace, "expected '{' to begin block")) {
     synchronizeToBlockStart();
@@ -1049,7 +1083,7 @@ std::unique_ptr<Expression> Parser::parseAssignment() {
   }
 
   auto node = std::make_unique<Expression>();
-  node->location = lexer_.locationAt(operatorToken.start);
+  node->location = SourceLocation{operatorToken.start, 0u, 0u};
 
   AssignmentExpression assignment;
   assignment.op = op;
@@ -1119,7 +1153,7 @@ std::unique_ptr<Expression> Parser::parseBinaryExpression(int minimumPrecedence)
     values.pop_back();
 
     auto node = std::make_unique<Expression>();
-    node->location = lexer_.locationAt(operatorToken.start);
+    node->location = SourceLocation{operatorToken.start, 0u, 0u};
 
     BinaryExpression binary;
     binary.op = operatorText(operatorKind);
@@ -1180,7 +1214,7 @@ std::unique_ptr<Expression> Parser::parseUnary() {
     }
 
     auto node = std::make_unique<Expression>();
-    node->location = lexer_.locationAt(operatorToken.start);
+    node->location = SourceLocation{operatorToken.start, 0u, 0u};
 
     UnaryExpression unary;
     unary.op = operatorText(operatorToken.kind);
@@ -1212,7 +1246,7 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
       advance();
 
       auto node = std::make_unique<Expression>();
-      node->location = lexer_.locationAt(memberToken.start);
+      node->location = SourceLocation{memberToken.start, 0u, 0u};
 
       MemberExpression member;
       member.base = std::move(expression);
@@ -1224,7 +1258,7 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
 
     if (match(TokenKind::LeftParen)) {
       auto node = std::make_unique<Expression>();
-      node->location = lexer_.locationAt(previous_.start);
+      node->location = SourceLocation{previous_.start, 0u, 0u};
 
       CallExpression call;
       call.arguments.reserve(4);
