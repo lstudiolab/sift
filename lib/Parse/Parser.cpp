@@ -104,16 +104,6 @@ Parser::Parser(std::string_view source, bool pieceMode)
       source_(source),
       pieceMode_(pieceMode),
       lineStarts_(std::make_shared<std::vector<std::size_t>>()) {
-  auto mutableLineStarts =
-      std::const_pointer_cast<std::vector<std::size_t>>(lineStarts_);
-  mutableLineStarts->reserve(64);
-  mutableLineStarts->push_back(0);
-  for (std::size_t i = 0; i < source_.size(); ++i) {
-    if (source_[i] == '\n') {
-      mutableLineStarts->push_back(i + 1);
-    }
-  }
-
   diagnostics_.reserve(32);
   callingNames_.reserve(32);
   functionNames_.reserve(32);
