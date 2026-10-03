@@ -203,7 +203,9 @@ void Parser::error(const Token& token, std::string_view message) {
 void Parser::synchronize() {
   while (!check(TokenKind::EndOfFile)) {
     if (previous_.kind == TokenKind::Semicolon ||
-        previous_.kind == TokenKind::RightBrace) {
+        previous_.kind == TokenKind::RightBrace ||
+        current_.kind == TokenKind::RightBrace ||
+        current_.kind == TokenKind::EndOfFile) {
       return;
     }
 
@@ -334,7 +336,8 @@ std::unique_ptr<StructDeclaration> Parser::parseStruct() {
   node->location = lexer_.locationAt(start.start);
   node->name = parseIdentifier("struct name");
 
-  if (!structNames_.insert(node->name).second) {
+  if (!node->name.empty() &&
+      !structNames_.insert(node->name).second) {
     error(previous_, "duplicate struct name");
   }
 
@@ -393,7 +396,8 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
   node->location = lexer_.locationAt(start.start);
   node->name = parseIdentifier("function name");
 
-  if (!functionNames_.insert(node->name).second) {
+  if (!node->name.empty() &&
+      !functionNames_.insert(node->name).second) {
     error(previous_, "duplicate function name in this file");
   }
 
@@ -409,7 +413,8 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
   } else {
     node->callingName = parseCallingName();
 
-    if (!callingNames_.insert(node->callingName).second) {
+    if (!node->callingName.empty() &&
+        !callingNames_.insert(node->callingName).second) {
       error(previous_, "calling name is already used by another function in this file");
     }
 
