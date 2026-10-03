@@ -512,6 +512,8 @@ public:
   SourceLocation locationAt(std::size_t offset) const noexcept;
 
 private:
+  friend class ParserThreadPool;
+
   lexer::Lexer lexer_;
   std::string_view source_;
   bool pieceMode_ = false;
