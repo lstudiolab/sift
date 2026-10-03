@@ -3,10 +3,12 @@
 
 #include "sift/Parse/Lexer.h"
 
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <cstdint>
 #include <variant>
 #include <unordered_set>
 #include <vector>
@@ -351,6 +353,31 @@ private:
 
   Token current_{};
   Token previous_{};
+
+  // Five parser slots form a FIFO pipeline. The lexer still produces exactly
+  // one token per fetch; tokens advance through all five parser stages before
+  // Slot 5 exposes the oldest token to the grammar as current_.
+  enum class ParserSlotStage : std::uint8_t {
+    Empty,
+    Parsed,
+    ReadyToCommit
+  };
+
+  struct ParserSlot final {
+    Token token{};
+    ParserSlotStage stage = ParserSlotStage::Empty;
+    std::size_t sequence = 0;
+  };
+
+  static constexpr std::size_t parserSlotCount_ = 5;
+  std::array<ParserSlot, parserSlotCount_> parserSlots_{};
+  std::size_t nextTokenSequence_ = 0;
+  bool parserPipelineInitialized_ = false;
+
+  Token fetchPipelineToken();
+  void parsePipelineSlot(ParserSlot& slot) noexcept;
+  Token commitPipelineSlot() noexcept;
+  void initializeParserPipeline();
 
   // Parser context used for structural control-flow validation.
   std::size_t functionDepth_ = 0;
