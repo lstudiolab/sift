@@ -359,8 +359,11 @@ private:
   // Slot 5 exposes the oldest token to the grammar as current_.
   enum class ParserSlotStage : std::uint8_t {
     Empty,
-    Parsed,
-    ReadyToCommit
+    Slot1Parsed,
+    Slot2Parsed,
+    Slot3Parsed,
+    Slot4Parsed,
+    Slot5ReadyToCommit
   };
 
   struct ParserSlot final {
@@ -375,7 +378,7 @@ private:
   bool parserPipelineInitialized_ = false;
 
   Token fetchPipelineToken();
-  void parsePipelineSlot(ParserSlot& slot) noexcept;
+  void parsePipelineSlot(ParserSlot& slot, std::size_t slotIndex) noexcept;
   Token commitPipelineSlot() noexcept;
   void initializeParserPipeline();
 
