@@ -356,8 +356,10 @@ private:
   std::size_t functionDepth_ = 0;
   std::size_t loopDepth_ = 0;
   std::size_t switchDepth_ = 0;
+  std::size_t statementDepth_ = 0;
   std::size_t expressionDepth_ = 0;
   std::size_t assignmentDepth_ = 0;
+  static constexpr std::size_t maxStatementDepth_ = 4096;
   static constexpr std::size_t maxExpressionDepth_ = 1024;
   static constexpr std::size_t maxAssignmentDepth_ = 256;
 
