@@ -1308,7 +1308,7 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
     advance();
 
     auto node = std::make_unique<Expression>();
-    node->location = lexer_.locationAt(token.start);
+    node->location = SourceLocation{token.start, 0u, 0u};
 
     LiteralExpression literal;
     literal.literalKind = token.kind;
