@@ -9,6 +9,7 @@
 #include <string_view>
 #include <variant>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace sift::parse {
@@ -189,6 +190,10 @@ struct Expression final : ASTNode {
       UnaryExpression,
       AssignmentExpression,
       MemberExpression,
+      IndexExpression,
+      RangeExpression,
+      ArrayLiteralExpression,
+      DictionaryLiteralExpression,
       CallExpression> value;
 
   NodeKind kind() const noexcept override {
