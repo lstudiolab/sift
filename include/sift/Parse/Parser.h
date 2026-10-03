@@ -385,7 +385,7 @@ private:
   Parser(std::string_view source, bool pieceMode);
   Parser(std::string_view source,
          std::shared_ptr<const std::vector<Token>> tokens,
-         std::shared_ptr<const std::vector<std::size_t>> lineStarts,
+         std::shared_ptr<std::vector<std::size_t>> lineStarts,
          std::size_t tokenBegin,
          std::size_t tokenEnd);
 
