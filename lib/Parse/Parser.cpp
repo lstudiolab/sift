@@ -113,10 +113,10 @@ Token Parser::fetchPipelineToken() {
   return token;
 }
 
-void Parser::parsePipelineSlot(ParserSlot& slot) noexcept {
-  // Every slot performs a parser-stage classification. Keeping this work
-  // local to the slot makes the pipeline explicit without changing the
-  // lexer's one-token-at-a-time contract.
+void Parser::parsePipelineSlot(ParserSlot& slot, std::size_t slotIndex) noexcept {
+  // Every slot is a parser stage. The stage performs the token classification
+  // work available at that point; later grammar routines consume the token
+  // only after Slot 5 has reached the FIFO commit boundary.
   switch (slot.token.kind) {
     case TokenKind::EndOfFile:
     case TokenKind::Identifier:
@@ -127,11 +127,17 @@ void Parser::parsePipelineSlot(ParserSlot& slot) noexcept {
     case TokenKind::CharacterLiteral:
     case TokenKind::KeywordTrue:
     case TokenKind::KeywordFalse:
-      slot.stage = ParserSlotStage::Parsed;
-      return;
+      break;
     default:
-      slot.stage = ParserSlotStage::Parsed;
-      return;
+      break;
+  }
+
+  switch (slotIndex) {
+    case 0: slot.stage = ParserSlotStage::Slot1Parsed; break;
+    case 1: slot.stage = ParserSlotStage::Slot2Parsed; break;
+    case 2: slot.stage = ParserSlotStage::Slot3Parsed; break;
+    case 3: slot.stage = ParserSlotStage::Slot4Parsed; break;
+    default: slot.stage = ParserSlotStage::Slot5ReadyToCommit; break;
   }
 }
 
@@ -140,22 +146,32 @@ void Parser::initializeParserPipeline() {
     return;
   }
 
-  // Fill from the lexer one token at a time. The oldest token is placed in
-  // Slot 5, which is the ordered commit stage.
-  for (std::size_t index = 0; index < parserSlotCount_; ++index) {
-    ParserSlot& slot = parserSlots_[index];
-    slot.token = fetchPipelineToken();
-    slot.sequence = nextTokenSequence_++;
-    parsePipelineSlot(slot);
+  // The lexer remains strictly one-token-at-a-time. Each newly fetched token
+  // enters Slot 1, while older tokens move toward Slot 5.
+  for (std::size_t count = 0; count < parserSlotCount_; ++count) {
+    for (std::size_t index = parserSlotCount_ - 1; index > 0; --index) {
+      parserSlots_[index] = std::move(parserSlots_[index - 1]);
+    }
+
+    ParserSlot& newest = parserSlots_[0];
+    newest.token = fetchPipelineToken();
+    newest.sequence = nextTokenSequence_++;
+    newest.stage = ParserSlotStage::Empty;
+    parsePipelineSlot(newest, 0);
+
+    for (std::size_t index = 1; index < parserSlotCount_; ++index) {
+      if (parserSlots_[index].stage != ParserSlotStage::Empty) {
+        parsePipelineSlot(parserSlots_[index], index);
+      }
+    }
   }
 
-  parserSlots_[parserSlotCount_ - 1].stage = ParserSlotStage::ReadyToCommit;
   parserPipelineInitialized_ = true;
 }
 
 Token Parser::commitPipelineSlot() noexcept {
   ParserSlot& commitSlot = parserSlots_[parserSlotCount_ - 1];
-  commitSlot.stage = ParserSlotStage::ReadyToCommit;
+  commitSlot.stage = ParserSlotStage::Slot5ReadyToCommit;
   return commitSlot.token;
 }
 
@@ -163,21 +179,20 @@ void Parser::advance() {
   previous_ = current_;
 
   initializeParserPipeline();
-
-  // The oldest token always moves to Slot 5 and commits first. Newer tokens
-  // may already be farther through the parser pipeline, but they cannot pass
-  // the Slot 5 FIFO boundary.
   current_ = commitPipelineSlot();
 
+  // The committed token leaves Slot 5. Every newer token moves exactly one
+  // slot forward, and the lexer supplies exactly one new token to Slot 1.
   for (std::size_t index = parserSlotCount_ - 1; index > 0; --index) {
     parserSlots_[index] = std::move(parserSlots_[index - 1]);
+    parsePipelineSlot(parserSlots_[index], index);
   }
 
   ParserSlot& newest = parserSlots_[0];
   newest.token = fetchPipelineToken();
   newest.sequence = nextTokenSequence_++;
   newest.stage = ParserSlotStage::Empty;
-  parsePipelineSlot(newest);
+  parsePipelineSlot(newest, 0);
 }
 
 bool Parser::canBreak() const noexcept {
