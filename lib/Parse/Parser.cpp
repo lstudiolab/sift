@@ -123,6 +123,21 @@ bool isNameToken(TokenKind kind) noexcept {
          isContextualNameToken(kind);
 }
 
+bool isAccessModifier(TokenKind kind) noexcept {
+  switch (kind) {
+    case TokenKind::KeywordPublic:
+    case TokenKind::KeywordPrivate:
+    case TokenKind::KeywordProtect:
+    case TokenKind::KeywordStatic:
+    case TokenKind::KeywordFinal:
+    case TokenKind::KeywordOpen:
+    case TokenKind::KeywordRequired:
+      return true;
+    default:
+      return false;
+  }
+}
+
 bool isTypeToken(TokenKind kind) noexcept {
   switch (kind) {
     case TokenKind::Identifier:
@@ -756,7 +771,43 @@ std::unique_ptr<Program> Parser::parseSequentialProgram() {
         break;
       }
       default: {
-        if (auto node = parseStatement()) {
+        if (isAccessModifier(current_.kind)) {
+          const std::string access = parseAccessModifier();
+          if (check(TokenKind::KeywordFunction)) {
+            if (auto node = parseFunction()) {
+              node->accessModifier = access;
+              program->functions.push_back(std::move(node));
+            }
+          } else if (check(TokenKind::KeywordVar) || check(TokenKind::KeywordConst)) {
+            if (auto node = parseVariable(check(TokenKind::KeywordConst))) {
+              node->accessModifier = access;
+              program->statements.push_back(std::make_unique<Statement>(
+                  Statement{std::move(*node)}));
+            }
+          } else if (check(TokenKind::KeywordClass)) {
+            if (auto node = parseClass()) {
+              node->accessModifier = access;
+              program->classes.push_back(std::move(node));
+            }
+          } else if (check(TokenKind::KeywordEnum)) {
+            if (auto node = parseEnum()) {
+              node->accessModifier = access;
+              program->enums.push_back(std::move(node));
+            }
+          } else if (check(TokenKind::KeywordProtocol)) {
+            if (auto node = parseProtocol()) {
+              node->accessModifier = access;
+              program->protocols.push_back(std::move(node));
+            }
+          } else if (check(TokenKind::KeywordExtension)) {
+            if (auto node = parseExtension()) {
+              node->accessModifier = access;
+              program->extensions.push_back(std::move(node));
+            }
+          } else {
+            error(current_, "access modifier must precede a declaration");
+          }
+        } else if (auto node = parseStatement()) {
           program->statements.push_back(std::move(node));
         }
         break;
@@ -867,7 +918,7 @@ std::string Parser::parseAccessModifier() {
 }
 
 std::unique_ptr<ClassDeclaration> Parser::parseClass() {
-  const std::string access = parseAccessModifier();
+  const std::string access = {};
   const Token start = current_;
   if (!check(TokenKind::KeywordClass)) {
     error(current_, "expected 'class'");
@@ -905,7 +956,7 @@ std::unique_ptr<ClassDeclaration> Parser::parseClass() {
 }
 
 std::unique_ptr<EnumDeclaration> Parser::parseEnum() {
-  const std::string access = parseAccessModifier();
+  const std::string access = {};
   const Token start = current_;
   if (!check(TokenKind::KeywordEnum)) {
     error(current_, "expected 'enum'");
@@ -949,7 +1000,7 @@ std::unique_ptr<EnumDeclaration> Parser::parseEnum() {
 }
 
 std::unique_ptr<ProtocolDeclaration> Parser::parseProtocol() {
-  const std::string access = parseAccessModifier();
+  const std::string access = {};
   const Token start = current_;
   if (!check(TokenKind::KeywordProtocol)) {
     error(current_, "expected 'protocol'");
@@ -984,7 +1035,7 @@ std::unique_ptr<ProtocolDeclaration> Parser::parseProtocol() {
 }
 
 std::unique_ptr<ExtensionDeclaration> Parser::parseExtension() {
-  const std::string access = parseAccessModifier();
+  const std::string access = {};
   const Token start = current_;
   if (!check(TokenKind::KeywordExtension)) {
     error(current_, "expected 'extension'");
@@ -1019,6 +1070,7 @@ std::unique_ptr<ExtensionDeclaration> Parser::parseExtension() {
 }
 
 std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
+  const std::string access = parseAccessModifier();
   const Token start = current_;
   advance();
 
@@ -1027,6 +1079,7 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
   auto node = std::make_unique<FunctionDeclaration>();
   node->parameters.reserve(4);
   node->location = SourceLocation{start.start, 0u, 0u};
+  node->accessModifier = access;
   node->name = parseIdentifier("function name");
 
   if (!expect(TokenKind::LeftParen, "expected '(' after function name")) {
@@ -1074,6 +1127,58 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
 
 std::unique_ptr<Statement> Parser::parseStatement() {
   auto node = std::make_unique<Statement>();
+
+  if (isAccessModifier(current_.kind)) {
+    const std::string access = parseAccessModifier();
+    switch (current_.kind) {
+      case TokenKind::KeywordVar:
+      case TokenKind::KeywordConst: {
+        if (auto parsed = parseVariable(check(TokenKind::KeywordConst))) {
+          parsed->accessModifier = access;
+          node->value = std::move(*parsed);
+        }
+        return node;
+      }
+      case TokenKind::KeywordFunction: {
+        if (auto parsed = parseFunction()) {
+          parsed->accessModifier = access;
+          node->value = std::move(*parsed);
+        }
+        return node;
+      }
+      case TokenKind::KeywordClass: {
+        if (auto parsed = parseClass()) {
+          parsed->accessModifier = access;
+          node->value = std::move(*parsed);
+        }
+        return node;
+      }
+      case TokenKind::KeywordEnum: {
+        if (auto parsed = parseEnum()) {
+          parsed->accessModifier = access;
+          node->value = std::move(*parsed);
+        }
+        return node;
+      }
+      case TokenKind::KeywordProtocol: {
+        if (auto parsed = parseProtocol()) {
+          parsed->accessModifier = access;
+          node->value = std::move(*parsed);
+        }
+        return node;
+      }
+      case TokenKind::KeywordExtension: {
+        if (auto parsed = parseExtension()) {
+          parsed->accessModifier = access;
+          node->value = std::move(*parsed);
+        }
+        return node;
+      }
+      default:
+        error(current_, "access modifier must precede a declaration");
+        return node;
+    }
+  }
 
   switch (current_.kind) {
     case TokenKind::KeywordVar:
