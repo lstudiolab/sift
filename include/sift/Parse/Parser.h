@@ -352,6 +352,7 @@ struct CatchClause final : ASTNode {
 };
 
 struct TryStatement final : ASTNode {
+  std::unique_ptr<Expression> expression;
   std::unique_ptr<Block> body;
   std::vector<std::unique_ptr<CatchClause>> catches;
 
