@@ -104,6 +104,14 @@ Parser::Parser(std::string_view source, bool pieceMode)
       source_(source),
       pieceMode_(pieceMode),
       lineStarts_(std::make_shared<std::vector<std::size_t>>()) {
+  lineStarts_->reserve(64);
+  lineStarts_->push_back(0);
+  for (std::size_t i = 0; i < source_.size(); ++i) {
+    if (source_[i] == '\n') {
+      lineStarts_->push_back(i + 1);
+    }
+  }
+
   diagnostics_.reserve(32);
   callingNames_.reserve(32);
   functionNames_.reserve(32);
