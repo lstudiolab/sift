@@ -103,6 +103,14 @@ Parser::Parser(std::string_view source, bool pieceMode)
     : lexer_(source, lexer::LexerOptions{false}),
       source_(source),
       pieceMode_(pieceMode) {
+  lineStarts_.reserve(64);
+  lineStarts_.push_back(0);
+  for (std::size_t i = 0; i < source_.size(); ++i) {
+    if (source_[i] == '\n') {
+      lineStarts_.push_back(i + 1);
+    }
+  }
+
   diagnostics_.reserve(32);
   callingNames_.reserve(32);
   functionNames_.reserve(32);
@@ -121,6 +129,14 @@ Parser::Parser(std::string_view source,
       tokenBuffer_(std::move(tokens)),
       tokenCursor_(tokenBegin),
       tokenEnd_(tokenEnd) {
+  lineStarts_.reserve(64);
+  lineStarts_.push_back(0);
+  for (std::size_t i = 0; i < source_.size(); ++i) {
+    if (source_[i] == '\n') {
+      lineStarts_.push_back(i + 1);
+    }
+  }
+
   diagnostics_.reserve(32);
   callingNames_.reserve(32);
   functionNames_.reserve(32);
@@ -138,6 +154,34 @@ const std::vector<Diagnostic>& Parser::diagnostics() const noexcept {
 
 bool Parser::hasErrors() const noexcept {
   return hasParserErrors_ || lexer_.hasErrors();
+}
+
+SourceLocation Parser::locationAt(std::size_t offset) const noexcept {
+  const std::size_t targetOffset =
+      std::min(offset, source_.size());
+
+  if (lineStarts_.empty()) {
+    return {targetOffset, 1, targetOffset + 1};
+  }
+
+  const auto iterator =
+      std::upper_bound(
+          lineStarts_.begin(),
+          lineStarts_.end(),
+          targetOffset);
+
+  const std::size_t lineIndex =
+      static_cast<std::size_t>(
+          iterator - lineStarts_.begin() - 1);
+
+  const std::size_t lineStart =
+      lineStarts_[lineIndex];
+
+  return {
+      targetOffset,
+      lineIndex + 1,
+      targetOffset - lineStart + 1
+  };
 }
 
 void Parser::advance() {
@@ -232,7 +276,20 @@ void Parser::addDiagnostic(SourceLocation location, std::string_view message) {
 }
 
 void Parser::error(const Token& token, std::string_view message) {
-  addDiagnostic(lexer_.locationAt(token.start), message);
+  if (diagnostics_.size() >= maxDiagnostics_) {
+    hasParserErrors_ = true;
+    if (!diagnosticsTruncated_) {
+      diagnosticsTruncated_ = true;
+      diagnostics_.push_back({
+          DiagnosticSeverity::Error,
+          locationAt(token.start),
+          "too many parser errors; further diagnostics suppressed"
+      });
+    }
+    return;
+  }
+
+  addDiagnostic(locationAt(token.start), message);
 }
 
 void Parser::synchronize() {
@@ -376,8 +433,8 @@ std::vector<Parser::PieceBoundary> Parser::findPieceBoundaries(
     }
   }
 
-  if (pieceStart < sourceSize) {
-    const std::size_t eofIndex = tokens.empty() ? 0 : tokens.size() - 1;
+  const std::size_t eofIndex = tokens.empty() ? 0 : tokens.size() - 1;
+  if (pieceStartToken < eofIndex && pieceStart < sourceSize) {
     pieces.push_back({pieceStart, sourceSize, pieceStartToken, eofIndex});
   }
   return pieces;
@@ -455,6 +512,46 @@ std::unique_ptr<Program> Parser::parse() {
                         std::make_move_iterator(result.diagnostics.begin()),
                         std::make_move_iterator(result.diagnostics.end()));
     hasParserErrors_ = hasParserErrors_ || result.hasErrors;
+  }
+
+  structNames_.clear();
+  functionNames_.clear();
+  callingNames_.clear();
+
+  for (const auto& structure : program->structs) {
+    if (!structure->name.empty() &&
+        !structNames_.insert(structure->name).second) {
+      addDiagnostic(locationAt(structure->location.offset),
+                    "duplicate struct name");
+    }
+
+    for (const auto& function : structure->functions) {
+      if (!function->name.empty() &&
+          !functionNames_.insert(function->name).second) {
+        addDiagnostic(locationAt(function->location.offset),
+                      "duplicate function name");
+      }
+
+      if (!function->callingName.empty() &&
+          !callingNames_.insert(function->callingName).second) {
+        addDiagnostic(locationAt(function->location.offset),
+                      "duplicate function calling name");
+      }
+    }
+  }
+
+  for (const auto& function : program->functions) {
+    if (!function->name.empty() &&
+        !functionNames_.insert(function->name).second) {
+      addDiagnostic(locationAt(function->location.offset),
+                    "duplicate function name");
+    }
+
+    if (!function->callingName.empty() &&
+        !callingNames_.insert(function->callingName).second) {
+      addDiagnostic(locationAt(function->location.offset),
+                    "duplicate function calling name");
+    }
   }
 
   std::stable_sort(diagnostics_.begin(), diagnostics_.end(),
@@ -544,11 +641,6 @@ std::unique_ptr<StructDeclaration> Parser::parseStruct() {
   node->location = SourceLocation{start.start, 0u, 0u};
   node->name = parseIdentifier("struct name");
 
-  if (!node->name.empty() &&
-      !structNames_.insert(node->name).second) {
-    error(previous_, "duplicate struct name");
-  }
-
   if (!expect(TokenKind::LeftBrace, "expected '{' after struct name")) {
     synchronize();
     return node;
@@ -607,11 +699,6 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
   node->location = SourceLocation{start.start, 0u, 0u};
   node->name = parseIdentifier("function name");
 
-  if (!node->name.empty() &&
-      !functionNames_.insert(node->name).second) {
-    error(previous_, "duplicate function name in this file");
-  }
-
   if (!expect(TokenKind::LeftParen, "expected '(' after function name")) {
     synchronizeToBlockStart();
     if (!check(TokenKind::LeftBrace)) {
@@ -623,11 +710,6 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
     error(current_, "Sift functions require exactly one calling name");
   } else {
     node->callingName = parseCallingName();
-
-    if (!node->callingName.empty() &&
-        !callingNames_.insert(node->callingName).second) {
-      error(previous_, "calling name is already used by another function in this file");
-    }
 
     if (match(TokenKind::Comma)) {
       error(previous_, "Sift functions allow only one calling name");
