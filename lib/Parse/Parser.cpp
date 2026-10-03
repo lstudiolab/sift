@@ -786,7 +786,7 @@ std::unique_ptr<IfStatement> Parser::parseIf() {
   if (match(TokenKind::KeywordElse)) {
     if (check(TokenKind::KeywordIf)) {
       node->elseBlock = std::make_unique<Block>();
-      node->elseBlock->location = lexer_.locationAt(current_.start);
+      node->elseBlock->location = SourceLocation{current_.start, 0u, 0u};
 
       if (auto nested = parseIf()) {
         auto statement = std::make_unique<Statement>();
@@ -1296,7 +1296,7 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
     advance();
 
     auto node = std::make_unique<Expression>();
-    node->location = lexer_.locationAt(token.start);
+    node->location = SourceLocation{token.start, 0u, 0u};
 
     IdentifierExpression identifier;
     identifier.name = tokenText(token);
