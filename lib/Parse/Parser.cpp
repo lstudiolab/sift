@@ -1502,26 +1502,67 @@ std::unique_ptr<Expression> Parser::parseBinaryExpression(int minimumPrecedence)
     return left;
   }
 
-  std::vector<TokenKind> operators;
-  std::vector<Token> operatorTokens;
-  std::vector<std::unique_ptr<Expression>> values;
+  constexpr std::size_t inlineCapacity = 16;
+  std::array<TokenKind, inlineCapacity> inlineOperators{};
+  std::array<Token, inlineCapacity> inlineOperatorTokens{};
+  std::array<std::unique_ptr<Expression>, inlineCapacity + 1> inlineValues{};
+  std::size_t operatorCount = 0;
+  std::size_t valueCount = 1;
 
-  operators.reserve(8);
-  operatorTokens.reserve(8);
-  values.reserve(8);
-  values.push_back(std::move(left));
+  inlineValues[0] = std::move(left);
+
+  std::vector<TokenKind> spilledOperators;
+  std::vector<Token> spilledOperatorTokens;
+  std::vector<std::unique_ptr<Expression>> spilledValues;
+  bool spilled = false;
+
+  auto spill = [&]() {
+    if (spilled) return;
+
+    spilledOperators.reserve(operatorCount + 16);
+    spilledOperatorTokens.reserve(operatorCount + 16);
+    spilledValues.reserve(valueCount + 16);
+
+    for (std::size_t index = 0; index < operatorCount; ++index) {
+      spilledOperators.push_back(inlineOperators[index]);
+      spilledOperatorTokens.push_back(inlineOperatorTokens[index]);
+    }
+
+    for (std::size_t index = 0; index < valueCount; ++index) {
+      spilledValues.push_back(std::move(inlineValues[index]));
+    }
+
+    spilled = true;
+  };
 
   auto reduce = [&]() {
-    const TokenKind operatorKind = operators.back();
-    const Token operatorToken = operatorTokens.back();
-    operators.pop_back();
-    operatorTokens.pop_back();
+    TokenKind operatorKind;
+    Token operatorToken;
+    std::unique_ptr<Expression> right;
+    std::unique_ptr<Expression> leftValue;
 
-    auto right = std::move(values.back());
-    values.pop_back();
+    if (spilled) {
+      operatorKind = spilledOperators.back();
+      operatorToken = spilledOperatorTokens.back();
+      spilledOperators.pop_back();
+      spilledOperatorTokens.pop_back();
 
-    auto leftValue = std::move(values.back());
-    values.pop_back();
+      right = std::move(spilledValues.back());
+      spilledValues.pop_back();
+
+      leftValue = std::move(spilledValues.back());
+      spilledValues.pop_back();
+    } else {
+      operatorKind = inlineOperators[operatorCount - 1];
+      operatorToken = inlineOperatorTokens[operatorCount - 1];
+      --operatorCount;
+
+      right = std::move(inlineValues[valueCount - 1]);
+      --valueCount;
+
+      leftValue = std::move(inlineValues[valueCount - 1]);
+      --valueCount;
+    }
 
     auto node = std::make_unique<Expression>();
     node->location = SourceLocation{operatorToken.start, 0u, 0u};
@@ -1531,7 +1572,12 @@ std::unique_ptr<Expression> Parser::parseBinaryExpression(int minimumPrecedence)
     binary.left = std::move(leftValue);
     binary.right = std::move(right);
     node->value = std::move(binary);
-    values.push_back(std::move(node));
+
+    if (spilled) {
+      spilledValues.push_back(std::move(node));
+    } else {
+      inlineValues[valueCount++] = std::move(node);
+    }
   };
 
   while (true) {
@@ -1555,16 +1601,32 @@ std::unique_ptr<Expression> Parser::parseBinaryExpression(int minimumPrecedence)
       break;
     }
 
-    operators.push_back(operatorKind);
-    operatorTokens.push_back(operatorToken);
-    values.push_back(std::move(right));
+    if (!spilled && operatorCount == inlineCapacity) {
+      spill();
+    }
+
+    if (spilled) {
+      spilledOperators.push_back(operatorKind);
+      spilledOperatorTokens.push_back(operatorToken);
+      spilledValues.push_back(std::move(right));
+    } else {
+      inlineOperators[operatorCount] = operatorKind;
+      inlineOperatorTokens[operatorCount] = operatorToken;
+      ++operatorCount;
+      inlineValues[valueCount++] = std::move(right);
+    }
   }
 
-  while (!operators.empty()) {
+  while ((spilled && !spilledOperators.empty()) ||
+         (!spilled && operatorCount != 0)) {
     reduce();
   }
 
-  return std::move(values.back());
+  if (spilled) {
+    return std::move(spilledValues.back());
+  }
+
+  return std::move(inlineValues[0]);
 }
 
 std::unique_ptr<Expression> Parser::parseUnary() {
