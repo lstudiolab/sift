@@ -1,5 +1,10 @@
 #include "sift/Parse/Parser.h"
 
+#include <algorithm>
+#include <future>
+#include <functional>
+#include <iterator>
+#include <type_traits>
 #include <utility>
 
 namespace sift::parse {
@@ -92,7 +97,12 @@ bool isUnaryOperator(TokenKind kind) noexcept {
 } // namespace
 
 Parser::Parser(std::string_view source)
-    : lexer_(source, lexer::LexerOptions{false}) {
+    : Parser(source, false) {}
+
+Parser::Parser(std::string_view source, bool pieceMode)
+    : lexer_(source, lexer::LexerOptions{false}),
+      source_(source),
+      pieceMode_(pieceMode) {
   diagnostics_.reserve(32);
   callingNames_.reserve(32);
   functionNames_.reserve(32);
@@ -108,91 +118,9 @@ bool Parser::hasErrors() const noexcept {
   return hasParserErrors_ || lexer_.hasErrors();
 }
 
-Token Parser::fetchPipelineToken() {
-  Token token = lexer_.lex();
-  return token;
-}
-
-void Parser::parsePipelineSlot(ParserSlot& slot, std::size_t slotIndex) noexcept {
-  // Every slot is a parser stage. The stage performs the token classification
-  // work available at that point; later grammar routines consume the token
-  // only after Slot 5 has reached the FIFO commit boundary.
-  switch (slot.token.kind) {
-    case TokenKind::EndOfFile:
-    case TokenKind::Identifier:
-    case TokenKind::CallingName:
-    case TokenKind::IntegerLiteral:
-    case TokenKind::FloatingLiteral:
-    case TokenKind::StringLiteral:
-    case TokenKind::CharacterLiteral:
-    case TokenKind::KeywordTrue:
-    case TokenKind::KeywordFalse:
-      break;
-    default:
-      break;
-  }
-
-  switch (slotIndex) {
-    case 0: slot.stage = ParserSlotStage::Slot1Parsed; break;
-    case 1: slot.stage = ParserSlotStage::Slot2Parsed; break;
-    case 2: slot.stage = ParserSlotStage::Slot3Parsed; break;
-    case 3: slot.stage = ParserSlotStage::Slot4Parsed; break;
-    default: slot.stage = ParserSlotStage::Slot5ReadyToCommit; break;
-  }
-}
-
-void Parser::initializeParserPipeline() {
-  if (parserPipelineInitialized_) {
-    return;
-  }
-
-  // The lexer remains strictly one-token-at-a-time. Each newly fetched token
-  // enters Slot 1, while older tokens move toward Slot 5.
-  for (std::size_t count = 0; count < parserSlotCount_; ++count) {
-    for (std::size_t index = parserSlotCount_ - 1; index > 0; --index) {
-      parserSlots_[index] = std::move(parserSlots_[index - 1]);
-    }
-
-    ParserSlot& newest = parserSlots_[0];
-    newest.token = fetchPipelineToken();
-    newest.sequence = nextTokenSequence_++;
-    newest.stage = ParserSlotStage::Empty;
-    parsePipelineSlot(newest, 0);
-
-    for (std::size_t index = 1; index < parserSlotCount_; ++index) {
-      if (parserSlots_[index].stage != ParserSlotStage::Empty) {
-        parsePipelineSlot(parserSlots_[index], index);
-      }
-    }
-  }
-
-  parserPipelineInitialized_ = true;
-}
-
-Token Parser::commitPipelineSlot() noexcept {
-  ParserSlot& commitSlot = parserSlots_[parserSlotCount_ - 1];
-  commitSlot.stage = ParserSlotStage::Slot5ReadyToCommit;
-  return commitSlot.token;
-}
-
 void Parser::advance() {
   previous_ = current_;
-
-  initializeParserPipeline();
-  current_ = commitPipelineSlot();
-
-  // The committed token leaves Slot 5. Every newer token moves exactly one
-  // slot forward, and the lexer supplies exactly one new token to Slot 1.
-  for (std::size_t index = parserSlotCount_ - 1; index > 0; --index) {
-    parserSlots_[index] = std::move(parserSlots_[index - 1]);
-    parsePipelineSlot(parserSlots_[index], index);
-  }
-
-  ParserSlot& newest = parserSlots_[0];
-  newest.token = fetchPipelineToken();
-  newest.sequence = nextTokenSequence_++;
-  newest.stage = ParserSlotStage::Empty;
-  parsePipelineSlot(newest, 0);
+  current_ = lexer_.lex();
 }
 
 bool Parser::canBreak() const noexcept {
@@ -260,26 +188,21 @@ bool Parser::expect(TokenKind kind, std::string_view message) {
   return false;
 }
 
-void Parser::error(const Token& token, std::string_view message) {
+void Parser::addDiagnostic(SourceLocation location, std::string_view message) {
   hasParserErrors_ = true;
-
   if (diagnostics_.size() >= maxDiagnostics_) {
     if (!diagnosticsTruncated_) {
       diagnosticsTruncated_ = true;
-      diagnostics_.push_back({
-          DiagnosticSeverity::Error,
-          lexer_.locationAt(token.start),
-          "too many parser errors; further diagnostics suppressed"
-      });
+      diagnostics_.push_back({DiagnosticSeverity::Error, location,
+                               "too many parser errors; further diagnostics suppressed"});
     }
     return;
   }
+  diagnostics_.push_back({DiagnosticSeverity::Error, location, std::string(message)});
+}
 
-  diagnostics_.push_back({
-      DiagnosticSeverity::Error,
-      lexer_.locationAt(token.start),
-      std::string(message)
-  });
+void Parser::error(const Token& token, std::string_view message) {
+  addDiagnostic(lexer_.locationAt(token.start), message);
 }
 
 void Parser::synchronize() {
@@ -337,8 +260,305 @@ void Parser::synchronizeToBlockStart() {
   }
 }
 
-// Parse the translation unit without recursive top-level descent.
+
+std::vector<Parser::PieceBoundary> Parser::findPieceBoundaries(std::string_view source) {
+  lexer::Lexer boundaryLexer(source, lexer::LexerOptions{false});
+  std::vector<PieceBoundary> pieces;
+  std::vector<Token> tokens;
+  tokens.reserve(source.size() / 8u + 8u);
+
+  while (true) {
+    Token token = boundaryLexer.lex();
+    tokens.push_back(token);
+    if (token.kind == TokenKind::EndOfFile) break;
+  }
+
+  std::size_t pieceStart = 0;
+  std::size_t braceDepth = 0;
+  std::size_t parenDepth = 0;
+  std::size_t bracketDepth = 0;
+
+  const auto startsTopLevelPiece = [](TokenKind kind) noexcept {
+    switch (kind) {
+      case TokenKind::KeywordImport:
+      case TokenKind::KeywordStruct:
+      case TokenKind::KeywordFunction:
+      case TokenKind::KeywordVar:
+      case TokenKind::KeywordConst:
+      case TokenKind::KeywordIf:
+      case TokenKind::KeywordWhile:
+      case TokenKind::KeywordRepeat:
+      case TokenKind::KeywordFor:
+      case TokenKind::KeywordSwitch:
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  for (const Token& token : tokens) {
+    if (token.kind == TokenKind::EndOfFile) break;
+
+    if (braceDepth == 0 && parenDepth == 0 && bracketDepth == 0 &&
+        token.start > pieceStart && startsTopLevelPiece(token.kind)) {
+      pieces.push_back({pieceStart, token.start});
+      pieceStart = token.start;
+    }
+
+    switch (token.kind) {
+      case TokenKind::LeftBrace:
+        ++braceDepth;
+        break;
+      case TokenKind::RightBrace:
+        if (braceDepth != 0) --braceDepth;
+        if (braceDepth == 0 && parenDepth == 0 && bracketDepth == 0) {
+          const std::size_t end = token.endOffset();
+          if (end > pieceStart) {
+            pieces.push_back({pieceStart, end});
+            pieceStart = end;
+          }
+        }
+        break;
+      case TokenKind::LeftParen:
+        ++parenDepth;
+        break;
+      case TokenKind::RightParen:
+        if (parenDepth != 0) --parenDepth;
+        break;
+      case TokenKind::LeftBracket:
+        ++bracketDepth;
+        break;
+      case TokenKind::RightBracket:
+        if (bracketDepth != 0) --bracketDepth;
+        break;
+      case TokenKind::Semicolon:
+        if (braceDepth == 0 && parenDepth == 0 && bracketDepth == 0) {
+          const std::size_t end = token.endOffset();
+          if (end > pieceStart) {
+            pieces.push_back({pieceStart, end});
+            pieceStart = end;
+          }
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (pieceStart < source.size()) {
+    pieces.push_back({pieceStart, source.size()});
+  }
+
+  return pieces;
+}
+
+Parser::PieceResult Parser::parsePiece(
+    std::size_t sequence,
+    PieceBoundary boundary) const {
+  PieceResult result;
+  result.sequence = sequence;
+  result.boundary = boundary;
+
+  Parser pieceParser(
+      source_.substr(boundary.start, boundary.end - boundary.start),
+      true);
+
+  result.program = pieceParser.parse();
+  result.diagnostics = pieceParser.diagnostics();
+  result.hasErrors = pieceParser.hasErrors();
+
+  const SourceLocation base = lexer_.locationAt(boundary.start);
+  const auto adjust = [base](SourceLocation& location) {
+    location.offset += base.offset;
+    if (location.line > 1) {
+      location.line += base.line - 1;
+    } else {
+      location.line = base.line;
+      location.column += base.column - 1;
+    }
+  };
+
+  std::function<void(ASTNode&)> visitNode;
+  std::function<void(Expression&)> visitExpression;
+  std::function<void(Statement&)> visitStatement;
+  std::function<void(Block&)> visitBlock;
+
+  visitNode = [&](ASTNode& node) { adjust(node.location); };
+
+  visitExpression = [&](Expression& node) {
+    visitNode(node);
+    std::visit([&](auto& value) {
+      visitNode(value);
+      using T = std::decay_t<decltype(value)>;
+      if constexpr (std::is_same_v<T, BinaryExpression>) {
+        visitExpression(*value.left);
+        visitExpression(*value.right);
+      } else if constexpr (std::is_same_v<T, UnaryExpression>) {
+        visitExpression(*value.operand);
+      } else if constexpr (std::is_same_v<T, AssignmentExpression>) {
+        visitExpression(*value.target);
+        visitExpression(*value.value);
+      } else if constexpr (std::is_same_v<T, MemberExpression>) {
+        visitExpression(*value.base);
+      } else if constexpr (std::is_same_v<T, CallExpression>) {
+        visitExpression(*value.callee);
+        for (auto& argument : value.arguments) visitExpression(*argument);
+      }
+    }, node.value);
+  };
+
+  visitBlock = [&](Block& node) {
+    visitNode(node);
+    for (auto& statement : node.statements) visitStatement(*statement);
+  };
+
+  visitStatement = [&](Statement& node) {
+    std::visit([&](auto& value) {
+      visitNode(value);
+      using T = std::decay_t<decltype(value)>;
+      if constexpr (std::is_same_v<T, VariableDeclaration>) {
+        if (value.initializer) visitExpression(*value.initializer);
+      } else if constexpr (std::is_same_v<T, FunctionDeclaration>) {
+        for (auto& parameter : value.parameters) visitNode(*parameter);
+        if (value.body) visitBlock(*value.body);
+      } else if constexpr (std::is_same_v<T, StructDeclaration>) {
+        for (auto& variable : value.variables) {
+          visitNode(*variable);
+          if (variable->initializer) visitExpression(*variable->initializer);
+        }
+        for (auto& function : value.functions) {
+          visitNode(*function);
+          for (auto& parameter : function->parameters) visitNode(*parameter);
+          if (function->body) visitBlock(*function->body);
+        }
+      } else if constexpr (std::is_same_v<T, IfStatement>) {
+        if (value.condition) visitExpression(*value.condition);
+        if (value.thenBlock) visitBlock(*value.thenBlock);
+        if (value.elseBlock) visitBlock(*value.elseBlock);
+      } else if constexpr (std::is_same_v<T, WhileStatement>) {
+        if (value.condition) visitExpression(*value.condition);
+        if (value.body) visitBlock(*value.body);
+      } else if constexpr (std::is_same_v<T, RepeatStatement>) {
+        if (value.body) visitBlock(*value.body);
+        if (value.condition) visitExpression(*value.condition);
+      } else if constexpr (std::is_same_v<T, ForStatement>) {
+        if (value.sequence) visitExpression(*value.sequence);
+        if (value.body) visitBlock(*value.body);
+      } else if constexpr (std::is_same_v<T, ReturnStatement>) {
+        if (value.value) visitExpression(*value.value);
+      } else if constexpr (std::is_same_v<T, DeferStatement>) {
+        if (value.body) visitBlock(*value.body);
+      } else if constexpr (std::is_same_v<T, SwitchStatement>) {
+        if (value.subject) visitExpression(*value.subject);
+        for (auto& caseNode : value.cases) {
+          visitNode(*caseNode);
+          if (caseNode->condition) visitExpression(*caseNode->condition);
+          if (caseNode->body) visitBlock(*caseNode->body);
+        }
+      } else if constexpr (std::is_same_v<T, ExpressionStatement>) {
+        if (value.expression) visitExpression(*value.expression);
+      }
+    }, node.value);
+  };
+
+  visitNode(*result.program);
+  for (auto& import : result.program->imports) visitNode(*import);
+  for (auto& structure : result.program->structs) {
+    visitNode(*structure);
+    for (auto& variable : structure->variables) {
+      visitNode(*variable);
+      if (variable->initializer) visitExpression(*variable->initializer);
+    }
+    for (auto& function : structure->functions) {
+      visitNode(*function);
+      for (auto& parameter : function->parameters) visitNode(*parameter);
+      if (function->body) visitBlock(*function->body);
+    }
+  }
+  for (auto& function : result.program->functions) {
+    visitNode(*function);
+    for (auto& parameter : function->parameters) visitNode(*parameter);
+    if (function->body) visitBlock(*function->body);
+  }
+  for (auto& statement : result.program->statements) visitStatement(*statement);
+
+  for (Diagnostic& diagnostic : result.diagnostics) adjust(diagnostic.location);
+  return result;
+}
+
 std::unique_ptr<Program> Parser::parse() {
+  if (pieceMode_) return parseSequentialProgram();
+
+  auto program = std::make_unique<Program>();
+  program->imports.reserve(8);
+  program->structs.reserve(8);
+  program->functions.reserve(16);
+  program->statements.reserve(32);
+  program->location = source_.empty() ? SourceLocation{} : lexer_.locationAt(0);
+
+  const std::vector<PieceBoundary> boundaries = findPieceBoundaries(source_);
+  std::vector<PieceResult> results(boundaries.size());
+
+  constexpr std::size_t maxConcurrentPieces = 5;
+  for (std::size_t batchStart = 0; batchStart < boundaries.size(); batchStart += maxConcurrentPieces) {
+    const std::size_t batchEnd = std::min(batchStart + maxConcurrentPieces, boundaries.size());
+    std::vector<std::future<PieceResult>> futures;
+    futures.reserve(batchEnd - batchStart);
+
+    for (std::size_t sequence = batchStart; sequence < batchEnd; ++sequence) {
+      futures.push_back(std::async(
+          std::launch::async,
+          [this, sequence, boundary = boundaries[sequence]] {
+            return parsePiece(sequence, boundary);
+          }));
+    }
+
+    for (std::size_t sequence = batchStart; sequence < batchEnd; ++sequence) {
+      results[sequence] = futures[sequence - batchStart].get();
+    }
+  }
+
+  for (PieceResult& result : results) {
+    if (!result.program) continue;
+
+    for (auto& import : result.program->imports) program->imports.push_back(std::move(import));
+    for (auto& structure : result.program->structs) program->structs.push_back(std::move(structure));
+    for (auto& function : result.program->functions) program->functions.push_back(std::move(function));
+    for (auto& statement : result.program->statements) program->statements.push_back(std::move(statement));
+
+    diagnostics_.insert(diagnostics_.end(),
+                        std::make_move_iterator(result.diagnostics.begin()),
+                        std::make_move_iterator(result.diagnostics.end()));
+    hasParserErrors_ = hasParserErrors_ || result.hasErrors;
+  }
+
+  for (const auto& structure : program->structs) {
+    if (!structure->name.empty() && !structNames_.insert(structure->name).second)
+      addDiagnostic(structure->location, "duplicate struct name");
+    for (const auto& function : structure->functions) {
+      if (!function->name.empty() && !functionNames_.insert(function->name).second)
+        addDiagnostic(function->location, "duplicate function name");
+      if (!function->callingName.empty() && !callingNames_.insert(function->callingName).second)
+        addDiagnostic(function->location, "duplicate function calling name");
+    }
+  }
+
+  for (const auto& function : program->functions) {
+    if (!function->name.empty() && !functionNames_.insert(function->name).second)
+      addDiagnostic(function->location, "duplicate function name");
+    if (!function->callingName.empty() && !callingNames_.insert(function->callingName).second)
+      addDiagnostic(function->location, "duplicate function calling name");
+  }
+
+  std::sort(diagnostics_.begin(), diagnostics_.end(),
+            [](const Diagnostic& left, const Diagnostic& right) {
+              return left.location.offset < right.location.offset;
+            });
+
+  return program;
+}
+
+std::unique_ptr<Program> Parser::parseSequentialProgram() {
   auto program = std::make_unique<Program>();
   program->imports.reserve(8);
   program->structs.reserve(8);
@@ -349,39 +569,29 @@ std::unique_ptr<Program> Parser::parse() {
       : lexer_.locationAt(current_.start);
 
   while (!check(TokenKind::EndOfFile)) {
-    if (match(TokenKind::Semicolon)) {
-      continue;
-    }
-
-    if (check(TokenKind::Comment)) {
-      advance();
+    if (match(TokenKind::Semicolon) || check(TokenKind::Comment)) {
+      if (check(TokenKind::Comment)) advance();
       continue;
     }
 
     const Token before = current_;
-
     switch (current_.kind) {
       case TokenKind::KeywordImport:
         program->imports.push_back(parseImport());
         break;
-
       case TokenKind::KeywordStruct:
         program->structs.push_back(parseStruct());
         break;
-
       case TokenKind::KeywordFunction:
         program->functions.push_back(parseFunction());
         break;
-
       default:
-        if (auto statement = parseStatement()) {
+        if (auto statement = parseStatement())
           program->statements.push_back(std::move(statement));
-        }
         break;
     }
 
-    if (current_.start == before.start &&
-        current_.kind == before.kind) {
+    if (current_.start == before.start && current_.kind == before.kind) {
       error(current_, "parser made no progress while parsing the program");
       advance();
     }
