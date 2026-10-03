@@ -989,21 +989,17 @@ std::unique_ptr<StructDeclaration> Parser::parseStruct() {
 }
 
 std::string Parser::parseAccessModifier() {
-  switch (current_.kind) {
-    case TokenKind::KeywordPublic:
-    case TokenKind::KeywordPrivate:
-    case TokenKind::KeywordProtect:
-    case TokenKind::KeywordStatic:
-    case TokenKind::KeywordFinal:
-    case TokenKind::KeywordOpen:
-    case TokenKind::KeywordRequired: {
-      const std::string value = tokenText(current_);
-      advance();
-      return value;
+  std::string value;
+
+  while (isAccessModifier(current_.kind)) {
+    if (!value.empty()) {
+      value += " ";
     }
-    default:
-      return {};
+    value += tokenText(current_);
+    advance();
   }
+
+  return value;
 }
 
 std::unique_ptr<ClassDeclaration> Parser::parseClass() {
