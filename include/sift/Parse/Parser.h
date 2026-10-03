@@ -235,6 +235,8 @@ struct VariableDeclaration final : ASTNode {
 
 struct FunctionDeclaration final : ASTNode {
   std::string accessModifier;
+  bool isAsync = false;
+  bool isThrows = false;
   std::string name;
   std::string callingName;
   std::vector<std::unique_ptr<Parameter>> parameters;
