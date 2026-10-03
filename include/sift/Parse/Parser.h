@@ -34,6 +34,10 @@ enum class NodeKind {
   ImportDeclaration,
   FunctionDeclaration,
   StructDeclaration,
+  ClassDeclaration,
+  EnumDeclaration,
+  ProtocolDeclaration,
+  ExtensionDeclaration,
   VariableDeclaration,
   ConstDeclaration,
   Parameter,
@@ -47,8 +51,14 @@ enum class NodeKind {
   DeferStatement,
   BreakStatement,
   ContinueStatement,
+  GuardStatement,
+  LoopStatement,
+  DoStatement,
+  ThrowStatement,
+  TryStatement,
   SwitchStatement,
   SwitchCase,
+  CatchClause,
   ExpressionStatement,
   IdentifierExpression,
   LiteralExpression,
@@ -56,6 +66,10 @@ enum class NodeKind {
   UnaryExpression,
   AssignmentExpression,
   MemberExpression,
+  IndexExpression,
+  RangeExpression,
+  ArrayLiteralExpression,
+  DictionaryLiteralExpression,
   CallExpression
 };
 
@@ -120,6 +134,41 @@ struct MemberExpression final : ASTNode {
 
   NodeKind kind() const noexcept override {
     return NodeKind::MemberExpression;
+  }
+};
+
+struct IndexExpression final : ASTNode {
+  std::unique_ptr<Expression> base;
+  std::unique_ptr<Expression> index;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::IndexExpression;
+  }
+};
+
+struct RangeExpression final : ASTNode {
+  std::unique_ptr<Expression> start;
+  std::unique_ptr<Expression> end;
+  bool inclusive = true;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::RangeExpression;
+  }
+};
+
+struct ArrayLiteralExpression final : ASTNode {
+  std::vector<std::unique_ptr<Expression>> elements;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::ArrayLiteralExpression;
+  }
+};
+
+struct DictionaryLiteralExpression final : ASTNode {
+  std::vector<std::pair<std::unique_ptr<Expression>, std::unique_ptr<Expression>>> entries;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::DictionaryLiteralExpression;
   }
 };
 
@@ -205,6 +254,99 @@ struct StructDeclaration final : ASTNode {
 
   NodeKind kind() const noexcept override {
     return NodeKind::StructDeclaration;
+  }
+};
+
+struct ClassDeclaration final : ASTNode {
+  std::string accessModifier;
+  std::string name;
+  std::vector<std::unique_ptr<VariableDeclaration>> variables;
+  std::vector<std::unique_ptr<FunctionDeclaration>> functions;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::ClassDeclaration;
+  }
+};
+
+struct EnumDeclaration final : ASTNode {
+  std::string accessModifier;
+  std::string name;
+  std::vector<std::string> cases;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::EnumDeclaration;
+  }
+};
+
+struct ProtocolDeclaration final : ASTNode {
+  std::string accessModifier;
+  std::string name;
+  std::vector<std::unique_ptr<FunctionDeclaration>> functions;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::ProtocolDeclaration;
+  }
+};
+
+struct ExtensionDeclaration final : ASTNode {
+  std::string accessModifier;
+  std::string target;
+  std::vector<std::unique_ptr<FunctionDeclaration>> functions;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::ExtensionDeclaration;
+  }
+};
+
+struct GuardStatement final : ASTNode {
+  std::unique_ptr<Expression> condition;
+  std::unique_ptr<Block> body;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::GuardStatement;
+  }
+};
+
+struct LoopStatement final : ASTNode {
+  std::unique_ptr<Block> body;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::LoopStatement;
+  }
+};
+
+struct DoStatement final : ASTNode {
+  std::unique_ptr<Block> body;
+  std::vector<std::unique_ptr<ASTNode>> catches;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::DoStatement;
+  }
+};
+
+struct ThrowStatement final : ASTNode {
+  std::unique_ptr<Expression> value;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::ThrowStatement;
+  }
+};
+
+struct CatchClause final : ASTNode {
+  std::unique_ptr<Expression> condition;
+  std::unique_ptr<Block> body;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::CatchClause;
+  }
+};
+
+struct TryStatement final : ASTNode {
+  std::unique_ptr<Block> body;
+  std::vector<std::unique_ptr<CatchClause>> catches;
+
+  NodeKind kind() const noexcept override {
+    return NodeKind::TryStatement;
   }
 };
 
@@ -306,6 +448,10 @@ struct Statement final {
       VariableDeclaration,
       FunctionDeclaration,
       StructDeclaration,
+      ClassDeclaration,
+      EnumDeclaration,
+      ProtocolDeclaration,
+      ExtensionDeclaration,
       IfStatement,
       WhileStatement,
       RepeatStatement,
@@ -314,6 +460,11 @@ struct Statement final {
       DeferStatement,
       BreakStatement,
       ContinueStatement,
+      GuardStatement,
+      LoopStatement,
+      DoStatement,
+      ThrowStatement,
+      TryStatement,
       SwitchStatement,
       ExpressionStatement> value;
 };
@@ -321,6 +472,10 @@ struct Statement final {
 struct Program final : ASTNode {
   std::vector<std::unique_ptr<ImportDeclaration>> imports;
   std::vector<std::unique_ptr<StructDeclaration>> structs;
+  std::vector<std::unique_ptr<ClassDeclaration>> classes;
+  std::vector<std::unique_ptr<EnumDeclaration>> enums;
+  std::vector<std::unique_ptr<ProtocolDeclaration>> protocols;
+  std::vector<std::unique_ptr<ExtensionDeclaration>> extensions;
   std::vector<std::unique_ptr<FunctionDeclaration>> functions;
   std::vector<std::unique_ptr<Statement>> statements;
 
@@ -410,6 +565,10 @@ private:
 
   std::unique_ptr<ImportDeclaration> parseImport();
   std::unique_ptr<StructDeclaration> parseStruct();
+  std::unique_ptr<ClassDeclaration> parseClass();
+  std::unique_ptr<EnumDeclaration> parseEnum();
+  std::unique_ptr<ProtocolDeclaration> parseProtocol();
+  std::unique_ptr<ExtensionDeclaration> parseExtension();
   std::unique_ptr<FunctionDeclaration> parseFunction();
   std::unique_ptr<Statement> parseStatement();
 
@@ -423,6 +582,11 @@ private:
   std::unique_ptr<SwitchStatement> parseSwitch();
   std::unique_ptr<BreakStatement> parseBreak();
   std::unique_ptr<ContinueStatement> parseContinue();
+  std::unique_ptr<GuardStatement> parseGuard();
+  std::unique_ptr<LoopStatement> parseLoop();
+  std::unique_ptr<DoStatement> parseDo();
+  std::unique_ptr<ThrowStatement> parseThrow();
+  std::unique_ptr<TryStatement> parseTry();
   std::unique_ptr<ExpressionStatement> parseExpressionStatement();
 
   bool canBreak() const noexcept;
@@ -444,6 +608,8 @@ private:
 
   std::string parseTypeName();
   std::string parseIdentifier(std::string_view context);
+  std::string parseAccessModifier();
+  std::unique_ptr<Parameter> parseParameter();
   std::string parseCallingName();
   std::string tokenText(const Token& token) const;
 
