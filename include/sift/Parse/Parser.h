@@ -3,6 +3,7 @@
 
 #include "sift/Parse/Lexer.h"
 
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -75,6 +76,10 @@ enum class NodeKind {
 };
 
 struct ASTNode {
+  static void* operator new(std::size_t size);
+  static void operator delete(void* pointer) noexcept;
+  static void operator delete(void* pointer, std::size_t) noexcept;
+
   virtual ~ASTNode() = default;
   virtual NodeKind kind() const noexcept = 0;
   SourceLocation location{};
@@ -481,6 +486,7 @@ struct Statement final {
 };
 
 struct Program final : ASTNode {
+  std::vector<std::shared_ptr<void>> arenaOwners;
   std::vector<std::unique_ptr<ImportDeclaration>> imports;
   std::vector<std::unique_ptr<StructDeclaration>> structs;
   std::vector<std::unique_ptr<ClassDeclaration>> classes;
