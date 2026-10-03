@@ -3,12 +3,10 @@
 
 #include "sift/Parse/Lexer.h"
 
-#include <array>
 #include <cstddef>
 #include <memory>
 #include <string>
 #include <string_view>
-#include <cstdint>
 #include <variant>
 #include <unordered_set>
 #include <vector>
@@ -342,6 +340,8 @@ public:
 
 private:
   lexer::Lexer lexer_;
+  std::string_view source_;
+  bool pieceMode_ = false;
   std::vector<Diagnostic> diagnostics_;
   bool diagnosticsTruncated_ = false;
   bool hasParserErrors_ = false;
@@ -353,34 +353,6 @@ private:
 
   Token current_{};
   Token previous_{};
-
-  // Five parser slots form a FIFO pipeline. The lexer still produces exactly
-  // one token per fetch; tokens advance through all five parser stages before
-  // Slot 5 exposes the oldest token to the grammar as current_.
-  enum class ParserSlotStage : std::uint8_t {
-    Empty,
-    Slot1Parsed,
-    Slot2Parsed,
-    Slot3Parsed,
-    Slot4Parsed,
-    Slot5ReadyToCommit
-  };
-
-  struct ParserSlot final {
-    Token token{};
-    ParserSlotStage stage = ParserSlotStage::Empty;
-    std::size_t sequence = 0;
-  };
-
-  static constexpr std::size_t parserSlotCount_ = 5;
-  std::array<ParserSlot, parserSlotCount_> parserSlots_{};
-  std::size_t nextTokenSequence_ = 0;
-  bool parserPipelineInitialized_ = false;
-
-  Token fetchPipelineToken();
-  void parsePipelineSlot(ParserSlot& slot, std::size_t slotIndex) noexcept;
-  Token commitPipelineSlot() noexcept;
-  void initializeParserPipeline();
 
   // Parser context used for structural control-flow validation.
   std::size_t functionDepth_ = 0;
@@ -399,9 +371,30 @@ private:
   bool expect(TokenKind kind, std::string_view message);
 
   void error(const Token& token, std::string_view message);
+  void addDiagnostic(SourceLocation location, std::string_view message);
   void synchronize();
   void synchronizeExpression();
   void synchronizeToBlockStart();
+
+  Parser(std::string_view source, bool pieceMode);
+
+  struct PieceBoundary final {
+    std::size_t start = 0;
+    std::size_t end = 0;
+  };
+
+  struct PieceResult final {
+    std::size_t sequence = 0;
+    PieceBoundary boundary{};
+    std::unique_ptr<Program> program;
+    std::vector<Diagnostic> diagnostics;
+    bool hasErrors = false;
+  };
+
+  static std::vector<PieceBoundary> findPieceBoundaries(std::string_view source);
+  PieceResult parsePiece(std::size_t sequence, PieceBoundary boundary) const;
+  std::unique_ptr<Program> parseSequentialProgram();
+  static void adjustProgramLocations(Program& program, SourceLocation base);
 
   std::unique_ptr<ImportDeclaration> parseImport();
   std::unique_ptr<StructDeclaration> parseStruct();
