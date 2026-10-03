@@ -347,7 +347,7 @@ private:
   std::shared_ptr<const std::vector<Token>> tokenBuffer_;
   std::size_t tokenCursor_ = 0;
   std::size_t tokenEnd_ = 0;
-  std::shared_ptr<const std::vector<std::size_t>> lineStarts_;
+  std::shared_ptr<std::vector<std::size_t>> lineStarts_;
   std::vector<Diagnostic> diagnostics_;
   bool diagnosticsTruncated_ = false;
   bool hasParserErrors_ = false;
