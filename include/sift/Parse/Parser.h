@@ -342,6 +342,10 @@ private:
   lexer::Lexer lexer_;
   std::string_view source_;
   bool pieceMode_ = false;
+  bool tokenMode_ = false;
+  std::shared_ptr<const std::vector<Token>> tokenBuffer_;
+  std::size_t tokenCursor_ = 0;
+  std::size_t tokenEnd_ = 0;
   std::vector<Diagnostic> diagnostics_;
   bool diagnosticsTruncated_ = false;
   bool hasParserErrors_ = false;
@@ -377,10 +381,13 @@ private:
   void synchronizeToBlockStart();
 
   Parser(std::string_view source, bool pieceMode);
+  Parser(std::string_view source, std::shared_ptr<const std::vector<Token>> tokens, std::size_t tokenBegin, std::size_t tokenEnd);
 
   struct PieceBoundary final {
     std::size_t start = 0;
     std::size_t end = 0;
+    std::size_t tokenBegin = 0;
+    std::size_t tokenEnd = 0;
   };
 
   struct PieceResult final {
@@ -391,10 +398,9 @@ private:
     bool hasErrors = false;
   };
 
-  static std::vector<PieceBoundary> findPieceBoundaries(std::string_view source);
+  static std::vector<PieceBoundary> findPieceBoundaries(const std::vector<Token>& tokens, std::size_t sourceSize);
   PieceResult parsePiece(std::size_t sequence, PieceBoundary boundary) const;
   std::unique_ptr<Program> parseSequentialProgram();
-  static void adjustProgramLocations(Program& program, SourceLocation base);
 
   std::unique_ptr<ImportDeclaration> parseImport();
   std::unique_ptr<StructDeclaration> parseStruct();
