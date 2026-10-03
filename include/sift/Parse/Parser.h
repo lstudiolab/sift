@@ -250,6 +250,7 @@ struct ImportDeclaration final : ASTNode {
 };
 
 struct StructDeclaration final : ASTNode {
+  std::string accessModifier;
   std::string name;
   std::vector<std::unique_ptr<VariableDeclaration>> variables;
   std::vector<std::unique_ptr<FunctionDeclaration>> functions;
