@@ -186,10 +186,13 @@ public:
       stopping_ = true;
       ++generation_;
     }
+
     condition_.notify_all();
 
     for (auto& worker : workers_) {
-      if (worker.joinable()) worker.join();
+      if (worker.joinable()) {
+        worker.join();
+      }
     }
   }
 
@@ -201,132 +204,128 @@ public:
       const std::vector<Parser::PieceBoundary>& boundaries,
       std::vector<Parser::PieceResult>& results) {
     std::lock_guard runLock(runMutex_);
-    parserThreadPool().run(this, boundaries, results);
+    std::atomic<std::size_t> nextSequence{0};
 
-  for (PieceResult& result : results) {
-    if (!result.program) continue;
+    {
+      std::lock_guard lock(mutex_);
+      parser_ = parser;
+      boundaries_ = &boundaries;
+      results_ = &results;
+      nextSequence_ = &nextSequence;
+      activeWorkers_ = workers_.size();
+      ++generation_;
+    }
 
-    program->arenaOwners.insert(
-        program->arenaOwners.end(),
-        std::make_move_iterator(result.program->arenaOwners.begin()),
-        std::make_move_iterator(result.program->arenaOwners.end()));
-    for (auto& import : result.program->imports) program->imports.push_back(std::move(import));
-    for (auto& structure : result.program->structs) program->structs.push_back(std::move(structure));
-    for (auto& classNode : result.program->classes) program->classes.push_back(std::move(classNode));
-    for (auto& enumNode : result.program->enums) program->enums.push_back(std::move(enumNode));
-    for (auto& protocolNode : result.program->protocols) program->protocols.push_back(std::move(protocolNode));
-    for (auto& extensionNode : result.program->extensions) program->extensions.push_back(std::move(extensionNode));
-    for (auto& function : result.program->functions) program->functions.push_back(std::move(function));
-    for (auto& statement : result.program->statements) program->statements.push_back(std::move(statement));
-    diagnostics_.insert(diagnostics_.end(),
-                        std::make_move_iterator(result.diagnostics.begin()),
-                        std::make_move_iterator(result.diagnostics.end()));
-    hasParserErrors_ = hasParserErrors_ || result.hasErrors;
+    condition_.notify_all();
+
+    std::unique_lock lock(mutex_);
+    completed_.wait(lock, [this] {
+      return activeWorkers_ == 0;
+    });
+
+    parser_ = nullptr;
+    boundaries_ = nullptr;
+    results_ = nullptr;
+    nextSequence_ = nullptr;
   }
 
-  structNames_.clear();
-  functionNames_.clear();
-  callingNames_.clear();
+private:
+  static constexpr std::size_t chunkSize = 32;
 
-  for (const auto& structure : program->structs) {
-    if (!structure->name.empty() &&
-        !structNames_.insert(structure->name).second) {
-      addDiagnostic(locationAt(structure->location.offset),
-                    "duplicate struct name");
-    }
+  void workerLoop() {
+    std::size_t seenGeneration = 0;
 
-    for (const auto& function : structure->functions) {
-      if (!function->name.empty() &&
-          !functionNames_.insert(function->name).second) {
-        addDiagnostic(locationAt(function->location.offset),
-                      "duplicate function name");
+    while (true) {
+      const Parser* parser = nullptr;
+      const std::vector<Parser::PieceBoundary>* boundaries = nullptr;
+      std::vector<Parser::PieceResult>* results = nullptr;
+      std::atomic<std::size_t>* nextSequence = nullptr;
+
+      {
+        std::unique_lock lock(mutex_);
+        condition_.wait(lock, [this, &seenGeneration] {
+          return stopping_ || generation_ != seenGeneration;
+        });
+
+        if (stopping_) {
+          return;
+        }
+
+        seenGeneration = generation_;
+        parser = parser_;
+        boundaries = boundaries_;
+        results = results_;
+        nextSequence = nextSequence_;
       }
 
-      if (!function->callingName.empty() &&
-          !callingNames_.insert(function->callingName).second) {
-        addDiagnostic(locationAt(function->location.offset),
-                      "duplicate function calling name");
-      }
-    }
-  }
+      while (true) {
+        const std::size_t first =
+            nextSequence->fetch_add(chunkSize, std::memory_order_relaxed);
+        if (first >= boundaries->size()) {
+          break;
+        }
 
-  for (const auto& classNode : program->classes) {
-    if (!classNode->name.empty() &&
-        !structNames_.insert(classNode->name).second) {
-      addDiagnostic(locationAt(classNode->location.offset),
-                    "duplicate type name");
-    }
-    for (const auto& function : classNode->functions) {
-      if (!function->name.empty() &&
-          !functionNames_.insert(function->name).second) {
-        addDiagnostic(locationAt(function->location.offset),
-                      "duplicate function name");
-      }
-      if (!function->callingName.empty() &&
-          !callingNames_.insert(function->callingName).second) {
-        addDiagnostic(locationAt(function->location.offset),
-                      "duplicate function calling name");
-      }
-    }
-  }
+        const std::size_t last =
+            std::min(first + chunkSize, boundaries->size());
 
-  for (const auto& enumNode : program->enums) {
-    if (!enumNode->name.empty() &&
-        !structNames_.insert(enumNode->name).second) {
-      addDiagnostic(locationAt(enumNode->location.offset),
-                    "duplicate type name");
-    }
-  }
-
-  for (const auto& protocolNode : program->protocols) {
-    if (!protocolNode->name.empty() &&
-        !structNames_.insert(protocolNode->name).second) {
-      addDiagnostic(locationAt(protocolNode->location.offset),
-                    "duplicate type name");
-    }
-    for (const auto& function : protocolNode->functions) {
-      if (!function->name.empty() &&
-          !functionNames_.insert(function->name).second) {
-        addDiagnostic(locationAt(function->location.offset),
-                      "duplicate function name");
+        for (std::size_t sequence = first; sequence < last; ++sequence) {
+          try {
+            (*results)[sequence] =
+                parser->parsePiece(sequence, (*boundaries)[sequence]);
+          } catch (const std::exception&) {
+            Parser::PieceResult failed;
+            failed.sequence = sequence;
+            failed.boundary = (*boundaries)[sequence];
+            failed.hasErrors = true;
+            failed.diagnostics.push_back({
+                DiagnosticSeverity::Error,
+                parser->locationAt((*boundaries)[sequence].start),
+                "parser worker failed while parsing this piece"
+            });
+            (*results)[sequence] = std::move(failed);
+          } catch (...) {
+            Parser::PieceResult failed;
+            failed.sequence = sequence;
+            failed.boundary = (*boundaries)[sequence];
+            failed.hasErrors = true;
+            failed.diagnostics.push_back({
+                DiagnosticSeverity::Error,
+                parser->locationAt((*boundaries)[sequence].start),
+                "parser worker failed while parsing this piece"
+            });
+            (*results)[sequence] = std::move(failed);
+          }
+        }
       }
-    }
-  }
 
-  for (const auto& extensionNode : program->extensions) {
-    for (const auto& function : extensionNode->functions) {
-      if (!function->name.empty() &&
-          !functionNames_.insert(function->name).second) {
-        addDiagnostic(locationAt(function->location.offset),
-                      "duplicate function name");
-      }
-      if (!function->callingName.empty() &&
-          !callingNames_.insert(function->callingName).second) {
-        addDiagnostic(locationAt(function->location.offset),
-                      "duplicate function calling name");
+      {
+        std::lock_guard lock(mutex_);
+        if (--activeWorkers_ == 0) {
+          completed_.notify_one();
+        }
       }
     }
   }
 
-  for (const auto& function : program->functions) {
-    if (!function->name.empty() &&
-        !functionNames_.insert(function->name).second) {
-      addDiagnostic(locationAt(function->location.offset),
-                    "duplicate function name");
-    }
+  std::mutex runMutex_;
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  std::condition_variable completed_;
+  std::vector<std::thread> workers_;
 
-    if (!function->callingName.empty() &&
-        !callingNames_.insert(function->callingName).second) {
-      addDiagnostic(locationAt(function->location.offset),
-                    "duplicate function calling name");
-    }
-  }
+  const Parser* parser_ = nullptr;
+  const std::vector<Parser::PieceBoundary>* boundaries_ = nullptr;
+  std::vector<Parser::PieceResult>* results_ = nullptr;
+  std::atomic<std::size_t>* nextSequence_ = nullptr;
 
-  std::stable_sort(diagnostics_.begin(), diagnostics_.end(),
-                   [](const Diagnostic& left, const Diagnostic& right) {
-                     return left.location.offset < right.location.offset;
-                   });
-  return program;
+  std::size_t generation_ = 0;
+  std::size_t activeWorkers_ = 0;
+  bool stopping_ = false;
+};
+
+ParserThreadPool& parserThreadPool() {
+  static ParserThreadPool pool;
+  return pool;
 }
 
 std::unique_ptr<Program> Parser::parseSequentialProgram() {
