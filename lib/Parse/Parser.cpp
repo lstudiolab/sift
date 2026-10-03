@@ -441,6 +441,9 @@ std::vector<Parser::PieceBoundary> Parser::findPieceBoundaries(
       case TokenKind::KeywordEnum:
       case TokenKind::KeywordProtocol:
       case TokenKind::KeywordExtension:
+      case TokenKind::KeywordEnum:
+      case TokenKind::KeywordProtocol:
+      case TokenKind::KeywordClass:
       case TokenKind::KeywordGuard:
       case TokenKind::KeywordLoop:
       case TokenKind::KeywordDo:
@@ -555,6 +558,17 @@ std::unique_ptr<Program> Parser::parse() {
     if (token.kind == TokenKind::EndOfFile) break;
   }
 
+  for (const auto& diagnostic : lexer_.diagnostics()) {
+    if (diagnostic.severity == lexer::DiagnosticSeverity::Error) {
+      hasParserErrors_ = true;
+    }
+    diagnostics_.push_back({
+        static_cast<DiagnosticSeverity>(diagnostic.severity),
+        diagnostic.location,
+        std::string(diagnostic.message)
+    });
+  }
+
   tokenBuffer_ = tokens;
   tokenMode_ = true;
   tokenCursor_ = 0;
@@ -579,9 +593,35 @@ std::unique_ptr<Program> Parser::parse() {
   for (unsigned int worker = 0; worker < workerCount; ++worker) {
     workers.emplace_back([this, &boundaries, &results, &nextSequence] {
       while (true) {
-        const std::size_t sequence = nextSequence.fetch_add(1, std::memory_order_relaxed);
+        const std::size_t sequence =
+            nextSequence.fetch_add(1, std::memory_order_relaxed);
         if (sequence >= boundaries.size()) return;
-        results[sequence] = parsePiece(sequence, boundaries[sequence]);
+
+        try {
+          results[sequence] = parsePiece(sequence, boundaries[sequence]);
+        } catch (const std::exception&) {
+          PieceResult failed;
+          failed.sequence = sequence;
+          failed.boundary = boundaries[sequence];
+          failed.hasErrors = true;
+          failed.diagnostics.push_back({
+              DiagnosticSeverity::Error,
+              locationAt(boundaries[sequence].start),
+              "parser worker failed while parsing this piece"
+          });
+          results[sequence] = std::move(failed);
+        } catch (...) {
+          PieceResult failed;
+          failed.sequence = sequence;
+          failed.boundary = boundaries[sequence];
+          failed.hasErrors = true;
+          failed.diagnostics.push_back({
+              DiagnosticSeverity::Error,
+              locationAt(boundaries[sequence].start),
+              "parser worker failed while parsing this piece"
+          });
+          results[sequence] = std::move(failed);
+        }
       }
     });
   }
