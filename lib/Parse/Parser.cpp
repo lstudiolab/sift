@@ -1,3 +1,24 @@
+// this is sift parser being one of the 
+// most optimized part of the compiler
+// this has used many techniques and has
+// many fall backs and error recovery
+// the rules for keywords is specifically for sift
+// this targets fast and heavy use parsing
+// this use 5 keywords parse at a time 
+// which is fast for big files but we have a 
+// alternative for small files which is
+// 1 token at a time which is fast for
+// small files but slow for big files
+// this give the parser a dynamic fast parsing
+// system 
+
+// this system is protected by L,STUDIO and
+// apache license
+
+// if you take this code with no permission from
+// L,STUDIO you will be force to pay fee for 
+// violating out terms
+
 #include "sift/Parse/Parser.h"
 
 #include <algorithm>
