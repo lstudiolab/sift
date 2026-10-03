@@ -444,6 +444,13 @@ std::vector<Parser::PieceBoundary> Parser::findPieceBoundaries(
       case TokenKind::KeywordEnum:
       case TokenKind::KeywordProtocol:
       case TokenKind::KeywordClass:
+      case TokenKind::KeywordPublic:
+      case TokenKind::KeywordPrivate:
+      case TokenKind::KeywordProtect:
+      case TokenKind::KeywordStatic:
+      case TokenKind::KeywordFinal:
+      case TokenKind::KeywordOpen:
+      case TokenKind::KeywordRequired:
       case TokenKind::KeywordGuard:
       case TokenKind::KeywordLoop:
       case TokenKind::KeywordDo:
@@ -461,6 +468,7 @@ std::vector<Parser::PieceBoundary> Parser::findPieceBoundaries(
     const bool topLevel = braceDepth == 0 && parenDepth == 0 && bracketDepth == 0;
 
     if (topLevel && i > pieceStartToken && startsTopLevelPiece(token.kind) &&
+        !isAccessModifier(previousKind) &&
         !(token.kind == TokenKind::KeywordIf && previousKind == TokenKind::KeywordElse) &&
         !(token.kind == TokenKind::KeywordWhile && pieceStartKind == TokenKind::KeywordRepeat)) {
       pieces.push_back({pieceStart, token.start, pieceStartToken, i});
@@ -823,6 +831,11 @@ std::unique_ptr<Program> Parser::parseSequentialProgram() {
               node->accessModifier = access;
               program->statements.push_back(std::make_unique<Statement>(
                   Statement{std::move(*node)}));
+            }
+          } else if (check(TokenKind::KeywordStruct)) {
+            if (auto node = parseStruct()) {
+              node->accessModifier = access;
+              program->structs.push_back(std::move(node));
             }
           } else if (check(TokenKind::KeywordClass)) {
             if (auto node = parseClass()) {
