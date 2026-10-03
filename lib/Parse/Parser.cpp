@@ -1041,12 +1041,19 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
   } else {
     node->callingName = parseCallingName();
 
-    if (match(TokenKind::Comma)) {
-      error(previous_, "Sift functions allow only one calling name");
-      while (!check(TokenKind::RightParen) &&
-             !check(TokenKind::EndOfFile)) {
-        advance();
+    while (match(TokenKind::Comma)) {
+      if (check(TokenKind::RightParen) || check(TokenKind::EndOfFile)) {
+        error(current_, "expected parameter after ','");
+        break;
       }
+
+      auto parameter = parseParameter();
+      if (!parameter) {
+        synchronizeExpression();
+        break;
+      }
+
+      node->parameters.push_back(std::move(parameter));
     }
   }
 
@@ -1223,6 +1230,24 @@ std::unique_ptr<VariableDeclaration> Parser::parseVariable(bool isConst) {
   return node;
 }
 
+std::unique_ptr<Parameter> Parser::parseParameter() {
+  const Token start = current_;
+  auto node = std::make_unique<Parameter>();
+  node->location = SourceLocation{start.start, 0u, 0u};
+  node->name = parseIdentifier("parameter name");
+
+  if (match(TokenKind::Colon)) {
+    node->type = parseTypeName();
+  }
+
+  if (node->name.empty()) {
+    synchronizeExpression();
+    return nullptr;
+  }
+
+  return node;
+}
+
 std::unique_ptr<IfStatement> Parser::parseIf() {
   if (statementDepth_ >= maxStatementDepth_) {
     error(current_, "statement nesting exceeds parser limit");
@@ -1369,6 +1394,88 @@ std::unique_ptr<ContinueStatement> Parser::parseContinue() {
     error(start, "'continue' is only valid inside a loop");
   }
   match(TokenKind::Semicolon);
+  return node;
+}
+
+std::unique_ptr<GuardStatement> Parser::parseGuard() {
+  const Token start = current_;
+  advance();
+
+  auto node = std::make_unique<GuardStatement>();
+  node->location = SourceLocation{start.start, 0u, 0u};
+  node->condition = parseExpression();
+  node->body = parseBlock();
+  return node;
+}
+
+std::unique_ptr<LoopStatement> Parser::parseLoop() {
+  const Token start = current_;
+  advance();
+
+  auto node = std::make_unique<LoopStatement>();
+  node->location = SourceLocation{start.start, 0u, 0u};
+
+  DepthGuard loopScope(loopDepth_);
+  node->body = parseBlock();
+  return node;
+}
+
+std::unique_ptr<ThrowStatement> Parser::parseThrow() {
+  const Token start = current_;
+  advance();
+
+  auto node = std::make_unique<ThrowStatement>();
+  node->location = SourceLocation{start.start, 0u, 0u};
+  node->value = parseExpression();
+  match(TokenKind::Semicolon);
+  return node;
+}
+
+std::unique_ptr<TryStatement> Parser::parseTry() {
+  const Token start = current_;
+  advance();
+
+  auto node = std::make_unique<TryStatement>();
+  node->location = SourceLocation{start.start, 0u, 0u};
+  node->body = parseBlock();
+
+  while (match(TokenKind::KeywordCatch)) {
+    auto clause = std::make_unique<CatchClause>();
+    clause->location = SourceLocation{previous_.start, 0u, 0u};
+
+    if (!check(TokenKind::LeftBrace)) {
+      clause->condition = parseExpression();
+    }
+
+    clause->body = parseBlock();
+    node->catches.push_back(std::move(clause));
+  }
+
+  if (node->catches.empty()) {
+    error(current_, "try statement requires at least one catch clause");
+  }
+
+  return node;
+}
+
+std::unique_ptr<DoStatement> Parser::parseDo() {
+  const Token start = current_;
+  advance();
+
+  auto node = std::make_unique<DoStatement>();
+  node->location = SourceLocation{start.start, 0u, 0u};
+  node->body = parseBlock();
+
+  while (match(TokenKind::KeywordCatch)) {
+    auto clause = std::make_unique<CatchClause>();
+    clause->location = SourceLocation{previous_.start, 0u, 0u};
+    if (!check(TokenKind::LeftBrace)) {
+      clause->condition = parseExpression();
+    }
+    clause->body = parseBlock();
+    node->catches.push_back(std::move(clause));
+  }
+
   return node;
 }
 
@@ -1691,10 +1798,41 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
   auto expression = parsePrimary();
 
   while (expression) {
-    if (match(TokenKind::Dot)) {
-      const Token memberToken = current_;
+    if (check(TokenKind::Dot)) {
+      const Token firstDot = current_;
+      advance();
 
-      if (!current_.isIdentifier()) {
+      if (check(TokenKind::Dot)) {
+        advance();
+        bool inclusive = true;
+        if (check(TokenKind::Dot)) {
+          advance();
+          inclusive = true;
+        } else if (match(TokenKind::Less)) {
+          inclusive = false;
+        }
+
+        auto range = std::make_unique<Expression>();
+        range->location = SourceLocation{firstDot.start, 0u, 0u};
+
+        RangeExpression rangeValue;
+        rangeValue.start = std::move(expression);
+        rangeValue.inclusive = inclusive;
+        rangeValue.end = parseUnary();
+
+        if (!rangeValue.end) {
+          error(current_, "expected range end expression");
+          synchronizeExpression();
+          return range;
+        }
+
+        range->value = std::move(rangeValue);
+        expression = std::move(range);
+        continue;
+      }
+
+      const Token memberToken = current_;
+      if (!isNameToken(current_.kind)) {
         error(current_, "expected a name after '.'");
         synchronizeExpression();
         return expression;
@@ -1709,6 +1847,20 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
       member.base = std::move(expression);
       member.member = tokenText(memberToken);
       node->value = std::move(member);
+      expression = std::move(node);
+      continue;
+    }
+
+    if (match(TokenKind::LeftBracket)) {
+      auto node = std::make_unique<Expression>();
+      node->location = SourceLocation{previous_.start, 0u, 0u};
+
+      IndexExpression index;
+      index.base = std::move(expression);
+      index.index = parseExpression();
+
+      expect(TokenKind::RightBracket, "expected ']' after index expression");
+      node->value = std::move(index);
       expression = std::move(node);
       continue;
     }
@@ -1748,8 +1900,7 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
 std::unique_ptr<Expression> Parser::parsePrimary() {
   const Token token = current_;
 
-  if (token.kind == TokenKind::Identifier ||
-      token.kind == TokenKind::CallingName) {
+  if (isNameToken(token.kind) || token.kind == TokenKind::KeywordSelf) {
     advance();
 
     auto node = std::make_unique<Expression>();
@@ -1758,6 +1909,28 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
     IdentifierExpression identifier;
     identifier.name = tokenText(token);
     node->value = std::move(identifier);
+    return node;
+  }
+
+  if (token.kind == TokenKind::KeywordAsync ||
+      token.kind == TokenKind::KeywordAwait ||
+      token.kind == TokenKind::KeywordTry ||
+      token.kind == TokenKind::KeywordCall) {
+    advance();
+
+    auto operand = parseUnary();
+    if (!operand) {
+      error(current_, "expected expression after prefix keyword");
+      return nullptr;
+    }
+
+    auto node = std::make_unique<Expression>();
+    node->location = SourceLocation{token.start, 0u, 0u};
+
+    UnaryExpression unary;
+    unary.op = tokenText(token);
+    unary.operand = std::move(operand);
+    node->value = std::move(unary);
     return node;
   }
 
@@ -1774,6 +1947,65 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
     return node;
   }
 
+  if (match(TokenKind::LeftBracket)) {
+    auto node = std::make_unique<Expression>();
+    node->location = SourceLocation{token.start, 0u, 0u};
+
+    if (match(TokenKind::RightBracket)) {
+      ArrayLiteralExpression array;
+      node->value = std::move(array);
+      return node;
+    }
+
+    auto first = parseExpression();
+    if (!first) {
+      synchronizeExpression();
+      expect(TokenKind::RightBracket, "expected ']' after collection literal");
+      return nullptr;
+    }
+
+    if (match(TokenKind::Colon)) {
+      DictionaryLiteralExpression dictionary;
+      dictionary.entries.reserve(4);
+
+      auto value = parseExpression();
+      if (!value) {
+        error(current_, "expected dictionary value");
+      } else {
+        dictionary.entries.emplace_back(std::move(first), std::move(value));
+      }
+
+      while (match(TokenKind::Comma)) {
+        if (check(TokenKind::RightBracket)) break;
+        auto key = parseExpression();
+        expect(TokenKind::Colon, "expected ':' between dictionary key and value");
+        auto mapped = parseExpression();
+        if (key && mapped) {
+          dictionary.entries.emplace_back(std::move(key), std::move(mapped));
+        }
+      }
+
+      expect(TokenKind::RightBracket, "expected ']' after dictionary literal");
+      node->value = std::move(dictionary);
+      return node;
+    }
+
+    ArrayLiteralExpression array;
+    array.elements.reserve(4);
+    array.elements.push_back(std::move(first));
+
+    while (match(TokenKind::Comma)) {
+      if (check(TokenKind::RightBracket)) break;
+      auto element = parseExpression();
+      if (!element) break;
+      array.elements.push_back(std::move(element));
+    }
+
+    expect(TokenKind::RightBracket, "expected ']' after array literal");
+    node->value = std::move(array);
+    return node;
+  }
+
   if (match(TokenKind::LeftParen)) {
     auto expression = parseExpression();
     expect(TokenKind::RightParen, "expected ')' after expression");
@@ -1786,42 +2018,34 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
 }
 
 std::string Parser::parseTypeName() {
-  if (isTypeToken(current_.kind)) {
-    std::string type = tokenText(current_);
-    advance();
-
-    while (match(TokenKind::Dot)) {
-      if (!current_.isIdentifier()) {
-        error(current_, "expected type name after '.'");
-        break;
-      }
-
-      type += ".";
-      type += tokenText(current_);
-      advance();
-    }
-
-    return type;
-  }
-
-  error(current_, "expected a type name");
-  return {};
-}
-
-std::string Parser::parseIdentifier(std::string_view context) {
-  if (!current_.isIdentifier()) {
-    error(current_, std::string("expected ") + std::string(context));
+  if (!isTypeToken(current_.kind) && !isNameToken(current_.kind)) {
+    error(current_, "expected a type name");
     return {};
   }
 
-  const std::string value = tokenText(current_);
+  std::string type = tokenText(current_);
   advance();
-  return value;
+
+  while (match(TokenKind::Dot)) {
+    if (!isNameToken(current_.kind)) {
+      error(current_, "expected type name after '.'");
+      break;
+    }
+
+    type += ".";
+    type += tokenText(current_);
+    advance();
+  }
+
+  if (match(TokenKind::Question)) {
+    type += "?";
+  }
+
+  return type;
 }
 
 std::string Parser::parseCallingName() {
-  if (current_.kind != TokenKind::CallingName &&
-      current_.kind != TokenKind::Identifier) {
+  if (!isNameToken(current_.kind)) {
     error(current_, "expected the single calling name inside function parentheses");
     return {};
   }
