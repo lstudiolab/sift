@@ -667,9 +667,6 @@ std::vector<Parser::PieceBoundary> Parser::findPieceBoundaries(
       case TokenKind::KeywordEnum:
       case TokenKind::KeywordProtocol:
       case TokenKind::KeywordExtension:
-      case TokenKind::KeywordEnum:
-      case TokenKind::KeywordProtocol:
-      case TokenKind::KeywordClass:
       case TokenKind::KeywordPublic:
       case TokenKind::KeywordPrivate:
       case TokenKind::KeywordProtect:
@@ -2202,8 +2199,10 @@ std::unique_ptr<Expression> Parser::parseBinaryExpression(int minimumPrecedence)
       break;
     }
 
-    while (!operators.empty() &&
-           binaryPrecedence(operators.back()) >= precedence) {
+    while ((spilled && !spilledOperatorTokens.empty() &&
+             binaryPrecedence(spilledOperators.back()) >= precedence) ||
+           (!spilled && operatorCount != 0 &&
+            binaryPrecedence(inlineOperators[operatorCount - 1]) >= precedence)) {
       reduce();
     }
 
