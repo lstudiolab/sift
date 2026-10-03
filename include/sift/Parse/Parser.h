@@ -337,6 +337,7 @@ public:
 
   const std::vector<Diagnostic>& diagnostics() const noexcept;
   bool hasErrors() const noexcept;
+  SourceLocation locationAt(std::size_t offset) const noexcept;
 
 private:
   lexer::Lexer lexer_;
@@ -346,6 +347,7 @@ private:
   std::shared_ptr<const std::vector<Token>> tokenBuffer_;
   std::size_t tokenCursor_ = 0;
   std::size_t tokenEnd_ = 0;
+  std::vector<std::size_t> lineStarts_;
   std::vector<Diagnostic> diagnostics_;
   bool diagnosticsTruncated_ = false;
   bool hasParserErrors_ = false;
