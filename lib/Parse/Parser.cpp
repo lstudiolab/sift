@@ -818,6 +818,19 @@ std::unique_ptr<Program> Parser::parseSequentialProgram() {
         }
         break;
       }
+      case TokenKind::KeywordAsync: {
+        const Token asyncToken = current_;
+        advance();
+        if (!check(TokenKind::KeywordFunction)) {
+          error(asyncToken, "expected 'function' after 'async'");
+          break;
+        }
+        if (auto node = parseFunction()) {
+          node->isAsync = true;
+          program->functions.push_back(std::move(node));
+        }
+        break;
+      }
       default: {
         if (isAccessModifier(current_.kind)) {
           const std::string access = parseAccessModifier();
@@ -1213,6 +1226,10 @@ std::unique_ptr<FunctionDeclaration> Parser::parseFunction() {
     node->returnType = parseTypeName();
   }
 
+  if (match(TokenKind::KeywordThrows)) {
+    node->isThrows = true;
+  }
+
   node->body = parseBlock();
 
   return node;
@@ -1334,6 +1351,17 @@ std::unique_ptr<Statement> Parser::parseStatement() {
         node->value = std::move(*parsed);
       }
       break;
+    case TokenKind::KeywordAsync: {
+      const Token asyncToken = current_;
+      advance();
+      if (!check(TokenKind::KeywordFunction)) {
+        error(asyncToken, "expected 'function' after 'async'");
+      } else if (auto parsed = parseFunction()) {
+        parsed->isAsync = true;
+        node->value = std::move(*parsed);
+      }
+      break;
+    }
     case TokenKind::KeywordStruct:
       if (auto parsed = parseStruct()) {
         node->value = std::move(*parsed);
@@ -1375,6 +1403,7 @@ std::unique_ptr<Statement> Parser::parseStatement() {
       }
       break;
     case TokenKind::KeywordThrow:
+    case TokenKind::KeywordRethrow:
       if (auto parsed = parseThrow()) {
         node->value = std::move(*parsed);
       }
@@ -1624,7 +1653,9 @@ std::unique_ptr<ThrowStatement> Parser::parseThrow() {
 
   auto node = std::make_unique<ThrowStatement>();
   node->location = SourceLocation{start.start, 0u, 0u};
-  node->value = parseExpression();
+  if (start.kind != TokenKind::KeywordRethrow) {
+    node->value = parseExpression();
+  }
   match(TokenKind::Semicolon);
   return node;
 }
@@ -2112,6 +2143,7 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
 
   if (token.kind == TokenKind::KeywordAsync ||
       token.kind == TokenKind::KeywordAwait ||
+      token.kind == TokenKind::KeywordWait ||
       token.kind == TokenKind::KeywordTry ||
       token.kind == TokenKind::KeywordCall) {
     advance();
