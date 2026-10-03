@@ -893,34 +893,73 @@ std::unique_ptr<Expression> Parser::parseBinaryExpression(int minimumPrecedence)
     return nullptr;
   }
 
-  while (true) {
-    const int precedence = binaryPrecedence(current_.kind);
-    if (precedence < minimumPrecedence) {
-      break;
-    }
+  if (minimumPrecedence != 1) {
+    return left;
+  }
 
-    const Token operatorToken = current_;
-    const TokenKind operatorKind = current_.kind;
-    advance();
+  std::vector<TokenKind> operators;
+  std::vector<Token> operatorTokens;
+  std::vector<std::unique_ptr<Expression>> values;
 
-    auto right = parseBinaryExpression(precedence + 1);
-    if (!right) {
-      error(current_, "expected expression after binary operator");
-      return left;
-    }
+  operators.reserve(8);
+  operatorTokens.reserve(8);
+  values.reserve(8);
+  values.push_back(std::move(left));
+
+  auto reduce = [&]() {
+    const TokenKind operatorKind = operators.back();
+    const Token operatorToken = operatorTokens.back();
+    operators.pop_back();
+    operatorTokens.pop_back();
+
+    auto right = std::move(values.back());
+    values.pop_back();
+
+    auto leftValue = std::move(values.back());
+    values.pop_back();
 
     auto node = std::make_unique<Expression>();
     node->location = lexer_.locationAt(operatorToken.start);
 
     BinaryExpression binary;
     binary.op = operatorText(operatorKind);
-    binary.left = std::move(left);
+    binary.left = std::move(leftValue);
     binary.right = std::move(right);
     node->value = std::move(binary);
-    left = std::move(node);
+    values.push_back(std::move(node));
+  };
+
+  while (true) {
+    const int precedence = binaryPrecedence(current_.kind);
+    if (precedence == 0) {
+      break;
+    }
+
+    while (!operators.empty() &&
+           binaryPrecedence(operators.back()) >= precedence) {
+      reduce();
+    }
+
+    const Token operatorToken = current_;
+    const TokenKind operatorKind = current_.kind;
+    advance();
+
+    auto right = parseUnary();
+    if (!right) {
+      error(current_, "expected expression after binary operator");
+      break;
+    }
+
+    operators.push_back(operatorKind);
+    operatorTokens.push_back(operatorToken);
+    values.push_back(std::move(right));
   }
 
-  return left;
+  while (!operators.empty()) {
+    reduce();
+  }
+
+  return std::move(values.back());
 }
 
 std::unique_ptr<Expression> Parser::parseUnary() {
