@@ -347,7 +347,7 @@ private:
   std::shared_ptr<const std::vector<Token>> tokenBuffer_;
   std::size_t tokenCursor_ = 0;
   std::size_t tokenEnd_ = 0;
-  std::vector<std::size_t> lineStarts_;
+  std::shared_ptr<const std::vector<std::size_t>> lineStarts_;
   std::vector<Diagnostic> diagnostics_;
   bool diagnosticsTruncated_ = false;
   bool hasParserErrors_ = false;
@@ -383,7 +383,11 @@ private:
   void synchronizeToBlockStart();
 
   Parser(std::string_view source, bool pieceMode);
-  Parser(std::string_view source, std::shared_ptr<const std::vector<Token>> tokens, std::size_t tokenBegin, std::size_t tokenEnd);
+  Parser(std::string_view source,
+         std::shared_ptr<const std::vector<Token>> tokens,
+         std::shared_ptr<const std::vector<std::size_t>> lineStarts,
+         std::size_t tokenBegin,
+         std::size_t tokenEnd);
 
   struct PieceBoundary final {
     std::size_t start = 0;
